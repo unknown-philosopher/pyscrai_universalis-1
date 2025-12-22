@@ -1,113 +1,83 @@
-# PyScrAI Universalis: Simulation Engine (ALPHA BUILD)
+# PyScrAI 
 
-**PyScrAI Universalis** is an agnostic linguistic simulation engine. It orchestrates "Sentient" Actors (powered by LLMs) within a deterministic turn-based environment to create dynamic "Generative Worlds."
+In PyScrAI, the user doesn't "joystick" a character; the user **injects intent** or **alters context**, and the Agent (supported by the LLM) determines how to execute that within their social reality.
 
-* **The Heart:** [Mesa](https://www.google.com/search?q=https://mesa-agent.org/) manages the clock and simulation cycles.
-* **The Brain:** [LangGraph](https://langchain-ai.github.io/langgraph/) manages the cognitive loop (Perception  Action  Adjudication).
-* **The Bridge:** [FastAPI](https://fastapi.tiangolo.com/) connects the simulation logic to the UI and external triggers.
+### 1. The Spectrum of Resolution
 
-## 🛠 Tech Stack
+We are moving away from "Classes" (Macro vs. Micro) and toward **"Resolution."**
 
-* **Language:** Python 3.10+
-* **Data:** MongoDB (World Ledger), ChromaDB (Vector Memory).
-* **Validation:** Pydantic.
-* **Observability:** Langfuse.
-* **LLM Provider:** OpenRouter (configurable).
+* **The .WORLD File (The Bounds):** Defines the maximum resolution of data available.
+* *Example:* The `US_2023.world` file contains data down to the county level for the whole country, but perhaps down to specific neighborhoods or "key agent" networks for specific active regions. It sets the "Physics" of the simulation (economic flows, weather patterns, social graph propagation rules).
 
-## 🚀 Quick Start
+* **The .SCENARIO File (The Lens):** Sets the active focus.
 
-### 1. Prerequisites
-
-* **Python 3.10+** installed.
-* **MongoDB** running locally on port `27017`.
-* **Docker** installed (for ChromaDB/Langfuse).
-
-### 2. Environment Setup
-
-Create a `.env` file in the root directory:
-
-```bash
-MONGO_URI="mongodb://localhost:27017/"
-MONGO_DB_NAME="universalis_mongodb"
-OPENROUTER_API_KEY="sk-..."
-OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
-MODEL_NAME="xiaomi/mimo-v2-flash:free"
-
-```
-
-### 3. Installation
-
-Create a virtual environment and install dependencies:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-```
-
-### 4. Start Infrastructure
-
-Start the vector database (ChromaDB) using Docker:
-
-```powershell
-docker run -d --name universalis-chromadb -p 8000:8000 --volume "path/to/project/chroma-data:/data" chromadb/chroma:latest
-
-```
-
-*(Or use `start_services.bat` if configured)*.
-
-### 5. Seed the World
-
-Initialize the database with the "Alpha Scenario" (Cycle 0):
-
-```bash
-python pyscrai/src/seed_mongodb.py
-
-```
-
-*This resets the `world_states` collection and spawns initial actors/assets.*
-
-### 6. Run the Engine
-
-Launch the API server:
-
-```bash
-python pyscrai/src/main.py
-
-```
-
-The engine is now pulsing at `http://0.0.0.0:8000`.
+* **Macro Resolution:** The user functions as a "Node of Influence," operating at the layer of grand strategy and systemic guidance. In this mode, you do not issue tactical unit commands; instead, you formulate and enact broad Policy and Directives. The Archon—the simulation's executive logic layer—interprets these directives, cross-referencing them with environmental feasibility, geopolitical provenance, and competing external factors. The Archon then executes the "moves" on the world stage, returning the consequences to the user via high-fidelity systemic metrics such as Approval Ratings, GDP fluctuations, and Casualty Reports. This creates a realistic "fog of leadership" where intent must navigate the friction of reality.
+* **Micro Resolution (AgentSociety Style):** The user is an "Observer/Participant." You don't "play" the character like a video game. You view their **Memory Stream**, see their **Current Plan**, and influence their **Reflections**.
+* *Action:* Instead of "Press 'A' to Attack," the user might input a high-level directive: *"Prioritize finding insulin for your grandmother."* The Universalis Engine then calculates how the Agent attempts to achieve this based on their personality, relationships, and the environment.
 
 ---
 
-## 🎮 Usage
+### 2. PyScrAI: Repository Structure (v0.1)
 
-**Advance the Simulation (Tick)**
-Trigger a full Perception-Action-Adjudication cycle:
+Keeping "Flow over Complexity" in mind, this structure enforces the separation of the Triad (Architect, Universalis, Forge) while providing a shared space for the data that binds them.
 
-```bash
-curl -X POST http://localhost:8000/simulation/tick
+```text
+pyscrai/
+├── main.py                   # The application entry point (bootloader)
+├── config.py                 # Global configuration (paths, API keys, resolution settings)
+├── requirements.txt          # Python dependencies
+│
+├── architect/                # [Design Time] Tools for creating Worlds/Scenarios
+│   ├── __init__.py
+│   ├── builder.py            # Logic for compiling raw data into .WORLD format
+│   ├── seeder.py             # Tools to ingest real-world data (Census, USGS, etc.)
+│   └── validator.py          # Ensures .WORLD files don't break simulation rules
+│
+├── universalis/              # [Run Time] The Simulation Engine
+│   ├── __init__.py
+│   ├── engine.py             # The main simulation loop (The "Heartbeat")
+│   ├── memory/               # The "Concordia" style memory systems
+│   │   ├── associative.py    # Vector database logic for agent memories
+│   │   └── stream.py         # The chronological log of events
+│   ├── agents/               # Logic for the entities
+│   │   ├── llm_controller.py # Interface with the LLM (OpenAI/Anthropic/Local)
+│   │   ├── macro_agent.py    # Logic for Organizations/Nations
+│   │   └── micro_agent.py    # Logic for Individuals (Social/Routine based)
+│   └── environment/          # Physics and World State
+│       ├── weather.py
+│       └── logistics.py
+│
+├── forge/                    # [Run Time] The UI / Visualization
+│   ├── __init__.py
+│   ├── app.py                # Main UI application wrapper
+│   ├── dashboard/            # The 2D overlay elements
+│   │   ├── macro_view.py     # Graphs, Heatmaps, Reports
+│   │   └── micro_view.py     # Agent Inspection, Dialogue History, Memory visualizer
+│   └── map/                  # The Interactive Map renderer
+│       ├── renderer.py
+│       └── layers.py         # Layers for Weather, Population, Traffic, etc.
+│
+├── data/                     # Storage for Simulation Files
+|   |- - database/            # Database storage (chromadb, mongodb, etc)
+│   ├── schemas/              # JSON/YAML schemas defining valid structure
+│   ├── worlds/               # .WORLD files (The Static Base)
+│   │   └── us_2023.world
+│   └── scenarios/            # .SCENARIO files (The Dynamic Overlay)
+│       ├── crisis_macro.scn
+│       └── crisis_micro.scn
+│
+├── utils/                    # Shared helper functions
+│   ├── logger.py
+│   └── converters.py         # Helpers to convert Lat/Lon to Grid, etc.
+│
+└── tests/                    # Unit and Integration tests
+    ├── test_engine.py
+    └── test_agents.py
 
 ```
 
-**Get World State**
-Retrieve the current "Ground Truth" ledger:
+### 3. Key Structural Decisions Explained
 
-```bash
-curl http://localhost:8000/state
-
-```
-
----
-
-## 📂 Project Structure
-
-| File | Description |
-| --- | --- |
-| `src/main.py` | **The Heartbeat.** Runs the FastAPI server and Mesa clock. |
-| `src/graph_logic.py` | **The Mind.** Contains LangGraph nodes for Actor Perception and Archon Adjudication. |
-| `src/schemas.py` | **The Laws.** Pydantic models defining `WorldState`, `Actor`, and `Asset`. |
-| `src/seed_mongodb.py` | **The Genesis.** Resets the DB and creates the initial scenario. |
-| `data/` | `data\chroma-data` Local storage for vector embeddings (mapped to Docker)
-`data\mongo-data` Local storage for MongoDB database files. |
+* **`universalis/memory/`**: This directory serves as the cognitive backbone of the simulation. Following the AgentSociety/Concordia model, this module manages a hybrid memory architecture critical to the Micro engine. It distinguishes between Archival Memory (a vector database for long-term storage and retrieval) and Active Context (a "tight," running summarization of immediate relevance kept with the actor). Crucially, this system allows for Emergent Character Evolution: by leveraging the inherent stochastic nature of LLMs (controlled hallucinations), agents can organically develop new traits or emphasize specific memories based on their personas. This introduces a degree of randomness that mimics human subjectivity, ensuring agents are not just static data points but evolving entities.
+* **`data/schemas/`**: Since the Architect creates files and Universalis reads them, we need strict Schemas (likely JSON Schema or Pydantic models) to ensure they speak the same language.
+* **`agents/llm_controller.py`**: We abstract the LLM calls here. This allows us to swap models easily (e.g., use GPT-4 for the "President" agent but a cheaper/faster local Llama-3 model for "Civilian #402").
