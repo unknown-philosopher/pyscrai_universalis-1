@@ -1,67 +1,83 @@
-# PyScrAI Universalis
+# PyScrAI 
 
-### Architecture Overview
+In PyScrAI, the user doesn't "joystick" a character; the user **injects intent** or **alters context**, and the Agent (supported by the LLM) determines how to execute that within their social reality.
 
-**Core Technologies**
-- **Python**: Main programming language, UV for package mangement.
-- **Pydantic**: Data validation and schema enforcement.
-- **LangChain & LangGraph**: Agent logic and orchestration.
-- **Langfuse**: LLM trace observability.
-- **FastAPI**: API bridge between UI and simulation.
-- **Mesa**: Simulation clock and turn management.
+### 1. The Spectrum of Resolution
 
-**User Interface**
-- **Flet**: Desktop UI framework.
-- **Flet-Map**: Spatial rendering (future, not MVP).
+We are moving away from "Classes" (Macro vs. Micro) and toward **"Resolution."**
 
-**Data & Storage**
-- **MongoDB**: World state ledger.
-- **ChromaDB**: Actor memory/history.
----
+* **The .WORLD File (The Bounds):** Defines the maximum resolution of data available.
+* *Example:* The `US_2023.world` file contains data down to the county level for the whole country, but perhaps down to specific neighborhoods or "key agent" networks for specific active regions. It sets the "Physics" of the simulation (economic flows, weather patterns, social graph propagation rules).
 
-| Category         | Component         | Description                                                        |
-|------------------|------------------|--------------------------------------------------------------------|
-| **UI**           | Flet & Flet-Map  | Python desktop app with interactive spatial rendering.              |
-| **Communication**| FastAPI          | Fast bridge between UI and simulation engine.                       |
-| **Logic Heart**  | Mesa             | Deterministic clock for turn-based cycles.                          |
-| **Orchestrator** | LangGraph        | Manages cycle: Perception → Action → Adjudication.                  |
-| **"Minds"**      | LangChain Agents | Sentient actors using natural language.                             |
-| **Judge**        | The Archon       | Referees intents, simulates environment.                            |
-| **State Store**  | MongoDB          | JSON ledger for world state.                                        |
-| **Memory Store** | ChromaDB         | Actor RAG history/Long term Memory.                                                  |
-| **Monitor**      | Langfuse         | Observability for LLM decisions.                                    |
+* **The .SCENARIO File (The Lens):** Sets the active focus.
+
+* **Macro Resolution:** The user functions as a "Node of Influence," operating at the layer of grand strategy and systemic guidance. In this mode, you do not issue tactical unit commands; instead, you formulate and enact broad Policy and Directives. The Archon—the simulation's executive logic layer—interprets these directives, cross-referencing them with environmental feasibility, geopolitical provenance, and competing external factors. The Archon then executes the "moves" on the world stage, returning the consequences to the user via high-fidelity systemic metrics such as Approval Ratings, GDP fluctuations, and Casualty Reports. This creates a realistic "fog of leadership" where intent must navigate the friction of reality.
+* **Micro Resolution (AgentSociety Style):** The user is an "Observer/Participant." You don't "play" the character like a video game. You view their **Memory Stream**, see their **Current Plan**, and influence their **Reflections**.
+* *Action:* Instead of "Press 'A' to Attack," the user might input a high-level directive: *"Prioritize finding insulin for your grandmother."* The Universalis Engine then calculates how the Agent attempts to achieve this based on their personality, relationships, and the environment.
 
 ---
 
-### Component Responsibilities
+### 2. PyScrAI: Repository Structure (v0.1)
 
-| Component   | Responsibility                                                    | Technical Implementation            |
-|-------------|-------------------------------------------------------------------|-------------------------------------|
-| **The Archon**  | Referee, environment simulation, state validation.            | LangGraph / Pydantic                |
-| **Actors**      | Sentient agents, strategy via RAG.                            | LangChain / ChromaDB                |
-| **Assets**      | Controlled units/resources.                                   | MongoDB sub-objects                 |
-| **Chronos**     | Master clock, cycle management.                               | Mesa / FastAPI                      |
-| **Ledger**      | Cycle snapshots, semantic history.                            | MongoDB / ChromaDB                  |
-                    |
+Keeping "Flow over Complexity" in mind, this structure enforces the separation of the Triad (Architect, Universalis, Forge) while providing a shared space for the data that binds them.
 
-## Overview
-The Agnostic Linguistic Simulation Engine is a multi-layered framework that transforms natural language configurations into dynamic, turn-based "Generative World" experiences. At its core, Mesa provides the deterministic temporal heartbeat, triggering a high-level orchestration loop managed by LangGraph. Built upon utilization of a speciality Architect Agent (Langchain). 
+```text
+pyscrai/
+├── main.py                   # The application entry point (bootloader)
+├── config.py                 # Global configuration (paths, API keys, resolution settings)
+├── requirements.txt          # Python dependencies
+│
+├── architect/                # [Design Time] Tools for creating Worlds/Scenarios
+│   ├── __init__.py
+│   ├── builder.py            # Logic for compiling raw data into .WORLD format
+│   ├── seeder.py             # Tools to ingest real-world data (Census, USGS, etc.)
+│   └── validator.py          # Ensures .WORLD files don't break simulation rules
+│
+├── universalis/              # [Run Time] The Simulation Engine
+│   ├── __init__.py
+│   ├── engine.py             # The main simulation loop (The "Heartbeat")
+│   ├── memory/               # The "Concordia" style memory systems
+│   │   ├── associative.py    # Vector database logic for agent memories
+│   │   └── stream.py         # The chronological log of events
+│   ├── agents/               # Logic for the entities
+│   │   ├── llm_controller.py # Interface with the LLM (OpenAI/Anthropic/Local)
+│   │   ├── macro_agent.py    # Logic for Organizations/Nations
+│   │   └── micro_agent.py    # Logic for Individuals (Social/Routine based)
+│   └── environment/          # Physics and World State
+│       ├── weather.py
+│       └── logistics.py
+│
+├── forge/                    # [Run Time] The UI / Visualization
+│   ├── __init__.py
+│   ├── app.py                # Main UI application wrapper
+│   ├── dashboard/            # The 2D overlay elements
+│   │   ├── macro_view.py     # Graphs, Heatmaps, Reports
+│   │   └── micro_view.py     # Agent Inspection, Dialogue History, Memory visualizer
+│   └── map/                  # The Interactive Map renderer
+│       ├── renderer.py
+│       └── layers.py         # Layers for Weather, Population, Traffic, etc.
+│
+├── data/                     # Storage for Simulation Files
+|   |- - database/            # Database storage (chromadb, mongodb, etc)
+│   ├── schemas/              # JSON/YAML schemas defining valid structure
+│   ├── worlds/               # .WORLD files (The Static Base)
+│   │   └── us_2023.world
+│   └── scenarios/            # .SCENARIO files (The Dynamic Overlay)
+│       ├── crisis_macro.scn
+│       └── crisis_micro.scn
+│
+├── utils/                    # Shared helper functions
+│   ├── logger.py
+│   └── converters.py         # Helpers to convert Lat/Lon to Grid, etc.
+│
+└── tests/                    # Unit and Integration tests
+    ├── test_engine.py
+    └── test_agents.py
 
-### Scenario Fabrication & Simulation Initialization
-The **Scenario Fabrication** phase is the preparatory gateway where abstract natural language concepts are transformed into a validated, machine-readable simulation seed. It begins with the user engaging a specialized **Architect Agent**, which utilizes a **Pydantic-driven** interactive dialogue to extract essential parameters such as geographic scale, temporal resolution, and the specific roster of **Actors** and **Assets**. Once the narrative goals are established, the Architect generates a structured JSON configuration that defines the initial "Ground Truth" for the **Archon** and seeds the **MongoDB** state store. This fabrication process also involves initializing the **ChromaDB** vector space with a "World Primer"—a foundational set of embeddings that provide historical context and specific mission objectives—ensuring that when **Mesa** triggers the first cycle, every entity is properly grounded in the linguistic and physical reality of the chosen scenario.
+```
 
-#### **The Fabrication Workflow**
-1. **Narrative Input**: User describes the scenario (e.g., "A wildfire containment effort in the Sierra Nevada").
-2. **Architect Interview**: The agent asks clarifying questions to define the **Resolution Lock** and unit capacities.
-3. **JSON Generation**: The system produces a master schema-compliant file containing environment variables, actor personas, and asset attributes.
-4. **Seed & Validation**: The **Archon** performs a dry-run validation of the JSON to ensure logic consistency.
-5. **Initialization**: **MongoDB** stores the cycle-zero state, and **ChromaDB** is primed with the scenario's backstory.
+### 3. Key Structural Decisions Explained
 
-## Operational Flow & Logic
-Asynchronous Perception: In each cycle, sentient Actors (powered by LangChain) perceive the world through an async-first FastAPI layer. They retrieve real-time state data from MongoDB and deep historical context from ChromaDB, utilizing temporal metadata filtering to ensure RAG results are prioritized by relevance to the current cycle.
-
-Strategic Intent: Actors can communicate, interact, or issue commands to each other and/or to their subordinate Assets—non-sentient entities (e.g., battalions, trucks) (Given the Scenario) that becomes managed via a Command Buffer pattern. These intents are strictly validated against a root Pydantic Master Schema before being passed to adjudication.
-
-Unified Adjudication: The Archon acts as the centralized judge, executing a dual-pass logic: first simulating environmental shifts (such as fire spread or storm intensification) and then resolving actor conflicts to maintain a consistent "Ground Truth".
-
-Persistence & Observability: The final cycle state is committed to MongoDB, while a linguistic summary is logged to ChromaDB for future recall. The entire process is mirrored in a modern Flet desktop interface—featuring real-time Flet-Map spatial rendering—while Langfuse provides comprehensive observability, tracing every linguistic decision with unique cycle tags for full auditability.
+* **`universalis/memory/`**: This directory serves as the cognitive backbone of the simulation. Following the AgentSociety/Concordia model, this module manages a hybrid memory architecture critical to the Micro engine. It distinguishes between Archival Memory (a vector database for long-term storage and retrieval) and Active Context (a "tight," running summarization of immediate relevance kept with the actor). Crucially, this system allows for Emergent Character Evolution: by leveraging the inherent stochastic nature of LLMs (controlled hallucinations), agents can organically develop new traits or emphasize specific memories based on their personas. This introduces a degree of randomness that mimics human subjectivity, ensuring agents are not just static data points but evolving entities.
+* **`data/schemas/`**: Since the Architect creates files and Universalis reads them, we need strict Schemas (likely JSON Schema or Pydantic models) to ensure they speak the same language.
+* **`agents/llm_controller.py`**: We abstract the LLM calls here. This allows us to swap models easily (e.g., use GPT-4 for the "President" agent but a cheaper/faster local Llama-3 model for "Civilian #402").

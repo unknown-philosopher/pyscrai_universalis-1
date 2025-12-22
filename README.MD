@@ -1,4 +1,4 @@
-# PyScrAI Universalis
+# PyScrAI Universalis: Simulation Engine (ALPHA BUILD)
 
 **PyScrAI Universalis** is an agnostic linguistic simulation engine. It orchestrates "Sentient" Actors (powered by LLMs) within a deterministic turn-based environment to create dynamic "Generative Worlds."
 
