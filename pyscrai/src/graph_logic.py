@@ -9,7 +9,7 @@ from langfuse.langchain import CallbackHandler
 from langgraph.graph import StateGraph, END
 
 # Local Imports
-from schemas import WorldState
+from src.schemas import WorldState
 
 # Load environment variables
 load_dotenv()

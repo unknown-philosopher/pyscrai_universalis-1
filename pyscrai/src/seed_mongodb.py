@@ -1,6 +1,6 @@
 from pymongo import MongoClient
 from datetime import datetime
-from schemas import WorldState, Environment, Actor, Asset
+from src.schemas import WorldState, Environment, Actor, Asset
 import os
 from dotenv import load_dotenv
 
