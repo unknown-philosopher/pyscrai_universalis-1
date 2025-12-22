@@ -38,7 +38,7 @@ class AgentState(TypedDict):
 
 # --- NODE 1: PERCEPTION (The Actors) ---
 def actor_perception_node(state: AgentState):
-    print("--- 🧠 NODE: ACTORS PERCEIVING ---")
+    print("---  NODE: ACTORS PERCEIVING ---")
     
     world = state["world_state"]
     env = world.environment
@@ -92,7 +92,7 @@ def actor_perception_node(state: AgentState):
 
 # --- NODE 2: ADJUDICATION (The Archon) ---
 def archon_adjudication_node(state: AgentState):
-    print("--- ⚖️ NODE: ARCHON ADJUDICATING ---")
+    print("---  NODE: ARCHON ADJUDICATING ---")
     
     current_state = state["world_state"]
     intents = "\n".join(state["actor_intents"])

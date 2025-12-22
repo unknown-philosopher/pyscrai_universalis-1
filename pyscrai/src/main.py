@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from graph_logic import simulation_brain
 
 # Import local schemas
-from schemas import WorldState, Environment
+from src.schemas import WorldState, Environment
 
 # Load env variables
 load_dotenv()
@@ -45,7 +45,7 @@ class SimulationEngine(mesa.Model):
         
         # Convert Pydantic model to dict for MongoDB
         states_collection.insert_one(world_state.model_dump())
-        print(f"✅ Cycle {world_state.environment.cycle} adjudicated and saved to MongoDB.")
+        print(f"Cycle {world_state.environment.cycle} adjudicated and saved to MongoDB.")
 
     def step(self):
         """

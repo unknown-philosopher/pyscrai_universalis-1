@@ -1,0 +1,52 @@
+---
+alwaysApply: true
+---
+# PyScrAI Universalis: AI Coding Agent Instructions
+
+## Project Overview
+- **PyScrAI Universalis** is a simulation engine orchestrating LLM-powered agents in a turn-based world. It uses:
+  - **Mesa** for simulation cycles ("Heartbeat")
+  - **LangGraph** for cognitive loops ("Mind")
+  - **FastAPI** for API/UI integration ("Bridge")
+  - **MongoDB** (world ledger) and **ChromaDB** (vector memory)
+  - **Langfuse** for observability/tracing
+
+## Architecture & Data Flow
+- **src/main.py**: FastAPI server, simulation entrypoint, and Mesa clock. Exposes `/simulation/tick` (advance cycle) and `/state` (get world state).
+- **src/graph_logic.py**: Defines LangGraph nodes for agent perception and Archon adjudication. LLM calls are abstracted here, using OpenRouter and Langfuse.
+- **src/schemas.py**: Pydantic models for `WorldState`, `Actor`, `Asset`, and `Environment`.
+- **src/seed_mongodb.py**: Seeds MongoDB with initial scenario state ("Alpha_Scenario").
+- **data/**: Contains persistent DB files for ChromaDB and MongoDB.
+
+## Key Patterns & Conventions
+- **LLM Integration**: All LLM calls use the `llm` instance in `graph_logic.py`, with prompts constructed per agent or for the Archon. Tracing is enabled via Langfuse.
+- **Simulation Step**: Each tick runs a Perception-Action-Adjudication cycle:
+  1. Agents perceive and generate intents (LLM)
+  2. Archon adjudicates intents and updates world state (LLM)
+  3. State is saved to MongoDB
+- **Memory System**: Hybrid memory (vector DB for archival, in-memory for active context) is planned, see `dev_plan.MD` for rationale.
+- **Scenario/World Files**: Not yet implemented, but design supports `.WORLD` (static) and `.SCENARIO` (dynamic) files for flexible simulation bounds.
+
+## Developer Workflows
+- **Setup**:
+  - Create `.env` with API keys and DB URIs (see README)
+  - Install dependencies: `pip install -r requirements.txt`
+  - Install PyScrAI in editable mode: `pip install -e ./pyscrai`
+  - Start services: `start_services.bat` (starts ChromaDB, MongoDB)
+- **Seed DB**: `python pyscrai/src/seed_mongodb.py`
+- **Run Engine**: `python pyscrai/src/main.py` (API at `localhost:8000`)
+- **Advance Simulation**: `curl -X POST http://localhost:8000/simulation/tick`
+- **Get State**: `curl http://localhost:8000/state`
+
+## Project-Specific Guidance
+- **Do not hardcode LLM/model parameters**; use environment variables and `.env`.
+- **Extend agent/archon logic** in `graph_logic.py` using the existing node pattern.
+- **Schema changes** must be reflected in both `schemas.py` and DB seeding logic.
+- **Follow the separation**: simulation logic (Universalis), world/scenario design (Architect), UI/visualization (Forge) as described in `dev_plan.MD`.
+- **For new memory/agent features**, consult `dev_plan.MD` for architectural intent.
+
+## References
+- See `pyscrai/README.MD` for quickstart, usage, and project structure.
+- See `dev_plan.MD` for architectural rationale and future plans.
+- Key files: `src/main.py`, `src/graph_logic.py`, `src/schemas.py`, `src/seed_mongodb.py`, `dev_plan.MD`, `README.MD`
+- **Concordia Reference Document**: See `concordia/concordia_cheat_sheet.md` for additional guidelines and reference material.

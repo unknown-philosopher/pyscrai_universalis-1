@@ -6,6 +6,8 @@ REM Create Langfuse services
 @REM cd /d "%~dp0langfuse"
 @REM docker compose up -d
 
+@REM pip install -e ./pyscrai
+
 REM Start universalis-chromadb Docker image (detached)
 docker start universalis-chromadb
 
