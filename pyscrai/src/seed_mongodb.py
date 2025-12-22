@@ -1,6 +1,6 @@
 from pymongo import MongoClient
 from datetime import datetime
-from src.schemas import WorldState, Environment, Actor, Asset
+from schemas import WorldState, Environment, Actor, Asset
 import os
 from dotenv import load_dotenv
 
@@ -56,7 +56,7 @@ def seed_simulation():
     
     # Insert Cycle 0
     collection.insert_one(initial_state.model_dump())
-    print("✅ Database Seeded Successfully!")
+    print("Database Seeded Successfully!")
 
 if __name__ == "__main__":
     seed_simulation()

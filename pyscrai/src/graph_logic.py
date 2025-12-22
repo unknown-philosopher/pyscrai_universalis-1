@@ -9,7 +9,7 @@ from langfuse.langchain import CallbackHandler
 from langgraph.graph import StateGraph, END
 
 # Local Imports
-from src.schemas import WorldState
+from schemas import WorldState
 
 # Load environment variables
 load_dotenv()
@@ -40,16 +40,54 @@ class AgentState(TypedDict):
 def actor_perception_node(state: AgentState):
     print("--- 🧠 NODE: ACTORS PERCEIVING ---")
     
-    # Placeholder: In the future, this will loop through Actors and perform RAG
-    # For now, we simulate a mock intent based on the cycle
-    cycle = state["world_state"].environment.cycle
-    
-    if cycle == 1:
-        intent = "Actor_FireChief: Order Truck_01 to move to Sector 7 due to smoke reports."
-    else:
-        intent = f"Actor_FireChief: Maintain position and assess situation (Cycle {cycle})."
-    
-    state["actor_intents"] = [intent]
+    world = state["world_state"]
+    env = world.environment
+    all_intents = []
+
+    # 1. Loop through all actors in the simulation
+    for actor_id, actor in world.actors.items():
+        
+        # 2. Build Context Strings
+        recent_events = "\n- ".join(env.global_events[-3:]) if env.global_events else "None"
+        asset_list = ", ".join(actor.assets) if actor.assets else "None"
+        objectives_list = "\n- ".join(actor.objectives) if actor.objectives else "None"
+        
+        # 3. Construct the Prompt
+        # This gives the LLM the "Mind" of the specific actor
+        prompt_content = (
+            f"You are {actor.role} (ID: {actor_id}).\n"
+            f"Description: {actor.description}\n"
+            f"Objectives:\n- {objectives_list}\n"
+            f"Assets under command: {asset_list}\n\n"
+            f"Current Situation:\n"
+            f"- Cycle: {env.cycle}\n"
+            f"- Time: {env.time}\n"
+            f"- Weather: {env.weather}\n"
+            f"- Recent Events:\n- {recent_events}\n\n"
+            "Based on your role and the situation, what is your strategic intent for this cycle? "
+            "Be concise. Refer to your assets by name if moving them."
+        )
+
+        try:
+            # 4. Invoke LLM (The Mind)
+            # We use the same 'llm' instance defined globally in graph_logic.py
+            response = llm.invoke(
+                [HumanMessage(content=prompt_content)],
+                config={"callbacks": [langfuse_handler]}
+            )
+            
+            # Format: "Actor_ID: [LLM Response]"
+            intent_str = f"{actor_id}: {response.content}"
+            all_intents.append(intent_str)
+            print(f"   > {actor_id} decided: {response.content[:50]}...")
+
+        except Exception as e:
+            error_msg = f"{actor_id} failed to act: {str(e)}"
+            all_intents.append(error_msg)
+            print(error_msg)
+
+    # 5. Update State
+    state["actor_intents"] = all_intents
     return state
 
 # --- NODE 2: ADJUDICATION (The Archon) ---
