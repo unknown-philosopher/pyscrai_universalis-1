@@ -1,52 +1,148 @@
 ---
-alwaysApply: false
+alwaysApply: true
 ---
-# PyScrAI Universalis: AI Coding Agent Instructions
 
-## Project Overview
-- **PyScrAI Universalis** is a simulation engine orchestrating LLM-powered agents in a turn-based world. It uses:
-  - **Mesa** for simulation cycles ("Heartbeat")
-  - **LangGraph** for cognitive loops ("Mind")
-  - **FastAPI** for API/UI integration ("Bridge")
-  - **MongoDB** (world ledger) and **ChromaDB** (vector memory)
-  - **Langfuse** for observability/tracing
+# PyScrAI Universalis - LLM Co-Developer Guide
 
-## Architecture & Data Flow
-- **src/main.py**: FastAPI server, simulation entrypoint, and Mesa clock. Exposes `/simulation/tick` (advance cycle) and `/state` (get world state).
-- **src/graph_logic.py**: Defines LangGraph nodes for agent perception and Archon adjudication. LLM calls are abstracted here, using OpenRouter and Langfuse.
-- **src/schemas.py**: Pydantic models for `WorldState`, `Actor`, `Asset`, and `Environment`.
-- **src/seed_mongodb.py**: Seeds MongoDB with initial scenario state ("Alpha_Scenario").
-- **data/**: Contains persistent DB files for ChromaDB and MongoDB.
+## Essential Reading
 
-## Key Patterns & Conventions
-- **LLM Integration**: All LLM calls use the `llm` instance in `graph_logic.py`, with prompts constructed per agent or for the Archon. Tracing is enabled via Langfuse.
-- **Simulation Step**: Each tick runs a Perception-Action-Adjudication cycle:
-  1. Agents perceive and generate intents (LLM)
-  2. Archon adjudicates intents and updates world state (LLM)
-  3. State is saved to MongoDB
-- **Memory System**: Hybrid memory (vector DB for archival, in-memory for active context) is planned, see `dev_plan.MD` for rationale.
-- **Scenario/World Files**: Not yet implemented, but design supports `.WORLD` (static) and `.SCENARIO` (dynamic) files for flexible simulation bounds.
+**Start here**: [`pyscrai/README.md`](pyscrai/README.md) - Complete developer onboarding guide
 
-## Developer Workflows
-- **Setup**:
-  - Create `.env` with API keys and DB URIs (see README)
-  - Install dependencies: `pip install -r requirements.txt`
-  - Install PyScrAI in editable mode: `pip install -e ./pyscrai`
-  - Start services: `start_services.bat` (starts ChromaDB, MongoDB)
-- **Seed DB**: `python pyscrai/src/seed_mongodb.py`
-- **Run Engine**: `python pyscrai/src/main.py` (API at `localhost:8000`)
-- **Advance Simulation**: `curl -X POST http://localhost:8000/simulation/tick`
-- **Get State**: `curl http://localhost:8000/state`
+## Architecture Principles
 
-## Project-Specific Guidance
-- **Do not hardcode LLM/model parameters**; use environment variables and `.env`.
-- **Extend agent/archon logic** in `graph_logic.py` using the existing node pattern.
-- **Schema changes** must be reflected in both `schemas.py` and DB seeding logic.
-- **Follow the separation**: simulation logic (Universalis), world/scenario design (Architect), UI/visualization (Forge) as described in `dev_plan.MD`.
-- **For new memory/agent features**, consult `dev_plan.MD` for architectural intent.
+### The Triad Structure
+- **Architect** (`pyscrai/architect/`): Design-time tools. NEVER import runtime components here.
+- **Universalis** (`pyscrai/universalis/`): Run-time engine. Core simulation logic.
+- **Forge** (`pyscrai/forge/`): UI/API layer. Can import from Universalis but NOT Architect.
 
-## References
-- See `pyscrai/README.MD` for quickstart, usage, and project structure.
-- See `dev_plan.MD` for architectural rationale and future plans.
-- Key files: `src/main.py`, `src/graph_logic.py`, `src/schemas.py`, `src/seed_mongodb.py`, `dev_plan.MD`, `README.MD`
-- **Concordia Reference Document**: See `concordia/concordia_cheat_sheet.md` for additional guidelines and reference material.
+**Rule**: Architect → Universalis → Forge (one-way dependency flow)
+
+### Import Patterns
+
+```python
+# ✅ CORRECT - Architect imports
+from pyscrai.data.schemas.models import WorldState, Actor, Asset
+
+# ✅ CORRECT - Universalis imports
+from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.data.schemas.models import WorldState
+
+# ✅ CORRECT - Forge imports
+from pyscrai.forge.dashboard.viewport import UnifiedViewport
+from pyscrai.universalis.engine import SimulationEngine
+
+# ❌ WRONG - Architect importing runtime
+from pyscrai.universalis.engine import SimulationEngine  # NO!
+
+# ❌ WRONG - Universalis importing Architect
+from pyscrai.architect.builder import WorldBuilder  # NO!
+```
+
+## Key Concepts
+
+### Memory System
+- Use `ChromaDBMemoryBank` for associative memory (semantic retrieval)
+- Use `MemoryStream` for chronological event logging
+- Always set `scope` (PUBLIC/PRIVATE/SHARED_GROUP) when storing memories
+- Use `ScopeFilter` when retrieving to prevent cross-agent memory leaks
+
+### Agents
+- **MacroAgent**: Strategic, organizational-level. Uses `ResolutionType.MACRO`
+- **MicroAgent**: Individual, social. Uses `ResolutionType.MICRO`. Has relationships.
+- Both use `LLMController` wrapper around `LanguageModel` interface
+
+### The Archon
+- Implements `ArchonInterface` with `adjudicate()`, `check_feasibility()`, `generate_rationale()`
+- Uses `FeasibilityEngine` for constraint checking
+- Stores rationales in `MemoryStream` for traceability
+
+## File Naming & Structure
+
+### Data Models
+- `pyscrai/data/schemas/models.py` - Pydantic models (WorldState, Actor, Asset, Environment)
+- `pyscrai/data/schemas/*.json` - JSON Schema definitions
+
+### Memory
+- `associative.py` - ChromaDBMemoryBank (main memory storage)
+- `scopes.py` - MemoryScope, ScopeFilter (access control)
+- `stream.py` - MemoryStream (event log)
+- `pruning.py` - MemoryPruner (maintenance)
+
+### Agents
+- `macro_agent.py` - Strategic agents
+- `micro_agent.py` - Social agents with relationships
+- `llm_controller.py` - LanguageModel interface (Concordia-compatible)
+- `llm_provider.py` - LangChain/OpenRouter implementation
+
+## Common Patterns
+
+### Creating a New Component
+
+1. **Place in correct layer** (Architect/Universalis/Forge)
+2. **Add to `__init__.py`** with proper exports
+3. **Use type hints** and docstrings (Google style)
+4. **Follow existing patterns** - check similar files first
+
+### Memory Storage Pattern
+
+```python
+from pyscrai.universalis.memory.scopes import MemoryScope, create_private_memory_metadata
+
+memory_bank.add(
+    text="Observation text",
+    scope=MemoryScope.PRIVATE,
+    owner_id=actor_id,
+    cycle=current_cycle,
+    importance=0.7
+)
+```
+
+### Agent Intent Generation Pattern
+
+```python
+def generate_intent(self, world_state: WorldState, context: Optional[Dict] = None):
+    if context is None:
+        context = self.perceive(world_state)
+    
+    prompt = self._build_prompt(context)
+    response = self._llm_controller.generate(prompt)
+    
+    # Store in memory
+    if self._memory_bank:
+        self._memory_bank.add(...)
+    
+    return Intent(...)
+```
+
+## Critical Rules
+
+1. **Never break the Triad dependency flow** (Architect → Universalis → Forge)
+2. **Always use `pyscrai.` prefix** for imports (package is installed in editable mode)
+3. **Memory scoping is mandatory** - prevent cross-agent memory leaks
+4. **Use `ResolutionType` enum** - don't hardcode "macro"/"micro" strings
+5. **Store rationales** - Archon decisions go to MemoryStream for traceability
+6. **Validate before building** - Use `WorldValidator` / `ContextValidator` before saving files
+
+## Testing Checklist
+
+Before submitting code:
+- [ ] Imports follow Triad structure
+- [ ] Memory uses proper scoping
+- [ ] Type hints on all functions
+- [ ] Docstrings in Google style
+- [ ] No hardcoded strings (use enums)
+- [ ] Rationales stored in MemoryStream (if Archon-related)
+
+## Quick Reference
+
+- **Main Entry**: `pyscrai/main.py` - Bootloader
+- **Config**: `pyscrai/config.py` - Centralized configuration
+- **Logger**: `pyscrai/utils/logger.py` - Use `get_logger(__name__)`
+- **Schemas**: `pyscrai/data/schemas/models.py` - All Pydantic models
+
+## When in Doubt
+
+1. Check `pyscrai/README.md` for detailed explanations
+2. Look at similar existing files for patterns
+3. Follow the Triad structure - it exists for a reason
+4. Ask: "Does this belong in Architect, Universalis, or Forge?"
