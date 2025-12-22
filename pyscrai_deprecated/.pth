@@ -1,0 +1,8 @@
+# # This file tells Python to add the specified directories to sys.path
+# import sys
+# from pathlib import Path
+
+# # Add the pyscrai directory to sys.path if not already present
+# pyscrai_path = str(Path(__file__).parent.resolve())
+# if pyscrai_path not in sys.path:
+#     sys.path.insert(0, pyscrai_path)

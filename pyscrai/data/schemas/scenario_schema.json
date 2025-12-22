@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pyscrai.dev/schemas/scenario.json",
+  "title": "PyScrAI Scenario Schema",
+  "description": "Schema for .SCENARIO files - dynamic deltas that modify .WORLD files",
+  "type": "object",
+  "required": ["scenario_id", "world_id", "name"],
+  "properties": {
+    "scenario_id": {
+      "type": "string",
+      "description": "Unique identifier for this scenario"
+    },
+    "world_id": {
+      "type": "string",
+      "description": "ID of the base .WORLD file to modify"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable scenario name"
+    },
+    "description": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "default": "1.0.0"
+    },
+    "initial_cycle": {
+      "type": "integer",
+      "default": 0
+    },
+    "initial_time": {
+      "type": "string",
+      "default": "08:00"
+    },
+    "initial_weather": {
+      "type": "string",
+      "default": "Clear"
+    },
+    "initial_events": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "actors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["actor_id", "role"],
+        "properties": {
+          "actor_id": { "type": "string" },
+          "role": { "type": "string" },
+          "description": { "type": "string" },
+          "resolution": { "type": "string", "enum": ["macro", "micro"] },
+          "assets": { "type": "array", "items": { "type": "string" } },
+          "objectives": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_id", "name", "asset_type"],
+        "properties": {
+          "asset_id": { "type": "string" },
+          "name": { "type": "string" },
+          "asset_type": { "type": "string" },
+          "location": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lon": { "type": "number" }
+            }
+          },
+          "status": { "type": "string", "default": "active" },
+          "attributes": { "type": "object" }
+        }
+      }
+    },
+    "patches": {
+      "type": "array",
+      "description": "JSON Patch operations to apply to the base world",
+      "items": {
+        "type": "object",
+        "required": ["op", "path"],
+        "properties": {
+          "op": { "type": "string", "enum": ["add", "remove", "replace", "move", "copy", "test"] },
+          "path": { "type": "string" },
+          "value": {},
+          "from": { "type": "string" }
+        }
+      }
+    },
+    "variables": {
+      "type": "object",
+      "description": "Scenario-specific variables that can be referenced",
+      "additionalProperties": true
+    }
+  }
+}
