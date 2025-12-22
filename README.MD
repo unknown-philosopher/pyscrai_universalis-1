@@ -80,4 +80,8 @@ pyscrai/
 
 * **`universalis/memory/`**: This directory serves as the cognitive backbone of the simulation. Following the AgentSociety/Concordia model, this module manages a hybrid memory architecture critical to the Micro engine. It distinguishes between Archival Memory (a vector database for long-term storage and retrieval) and Active Context (a "tight," running summarization of immediate relevance kept with the actor). Crucially, this system allows for Emergent Character Evolution: by leveraging the inherent stochastic nature of LLMs (controlled hallucinations), agents can organically develop new traits or emphasize specific memories based on their personas. This introduces a degree of randomness that mimics human subjectivity, ensuring agents are not just static data points but evolving entities.
 * **`data/schemas/`**: Since the Architect creates files and Universalis reads them, we need strict Schemas (likely JSON Schema or Pydantic models) to ensure they speak the same language.
-* **`agents/llm_controller.py`**: We abstract the LLM calls here. This allows us to swap models easily (e.g., use GPT-4 for the "President" agent but a cheaper/faster local Llama-3 model for "Civilian #402").
+* **`agents/llm_controller.py`**: We abstract the LLM calls here. This allows us to swap models easily (e.g., use GPT-4 for the "President" agent but a cheaper/faster local Llama-3 model for "Civilian #402"), possibly even using smaller models for specific tasks, eventually even training our own for certain roles. 
+
+`alpha_pyscrai` - Directory containing the first attempt at PyScrAI: Universalis Simulation Engine. Has many implementations we can certainly still borrow from, namely the LLM provider interface.  
+
+
