@@ -3,8 +3,9 @@ Archon Adjudicator - The omniscient referee of PyScrAI Universalis.
 
 This module contains the LangGraph-based adjudication logic that:
 1. Orchestrates Agent Perception (delegating to Agent classes)
-2. Checks Feasibility (using FeasibilityEngine)
+2. Checks Feasibility using DuckDB spatial queries
 3. Adjudicates outcomes and Updates world state
+4. Supports interrupts for "God Mode" control
 """
 
 import os
@@ -14,7 +15,6 @@ from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
-from langfuse.langchain import CallbackHandler
 from langgraph.graph import StateGraph, END
 
 from pyscrai.data.schemas.models import WorldState, ResolutionType, Actor
@@ -24,16 +24,26 @@ from pyscrai.universalis.archon.interface import (
     FeasibilityReport
 )
 from pyscrai.universalis.archon.feasibility import FeasibilityEngine
+from pyscrai.universalis.archon.spatial_constraints import SpatialConstraintChecker
 from pyscrai.universalis.agents.macro_agent import MacroAgent, create_macro_agent
 from pyscrai.universalis.agents.micro_agent import MicroAgent, create_micro_agent
-from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.universalis.state.duckdb_manager import get_state_manager
 from pyscrai.universalis.memory.stream import MemoryStream
+from pyscrai.config import get_config
 from pyscrai.utils.logger import get_logger
 
 # Load environment variables
 load_dotenv()
 
 logger = get_logger(__name__)
+
+# Try to import langfuse
+try:
+    from langfuse.langchain import CallbackHandler
+    LANGFUSE_AVAILABLE = True
+except ImportError:
+    LANGFUSE_AVAILABLE = False
+    logger.debug("Langfuse not available, tracing disabled")
 
 
 class AgentState(TypedDict):
@@ -42,8 +52,10 @@ class AgentState(TypedDict):
     actor_intents: Dict[str, str]  # Map actor_id -> intent string
     actor_errors: Dict[str, str]  # Map actor_id -> error message
     feasibility_reports: Dict[str, FeasibilityReport]  # Map actor_id -> report
+    perception_context: Dict[str, Dict[str, Any]]  # Map actor_id -> perception data
     archon_summary: str
     rationales: List[Dict[str, Any]]
+    interrupted: bool  # For God Mode support
 
 
 class Archon(ArchonInterface):
@@ -51,14 +63,15 @@ class Archon(ArchonInterface):
     The Archon - omniscient referee of the simulation.
     
     Orchestrates agent perception, feasibility checking, and adjudication
-    using LangGraph workflow.
+    using LangGraph workflow. Uses DuckDB for spatial constraint checking.
     """
     
     def __init__(
         self,
         model_name: Optional[str] = None,
         temperature: float = 0.7,
-        enable_tracing: bool = True
+        enable_tracing: bool = True,
+        simulation_id: Optional[str] = None
     ):
         """
         Initialize the Archon.
@@ -67,11 +80,15 @@ class Archon(ArchonInterface):
             model_name: LLM model to use (defaults to env var)
             temperature: LLM temperature setting
             enable_tracing: Enable Langfuse tracing
+            simulation_id: Simulation ID for spatial queries
         """
+        config = get_config()
+        
         # LLM Configuration
-        self._api_key = os.getenv("OPENROUTER_API_KEY")
-        self._base_url = os.getenv("OPENROUTER_BASE_URL")
-        self._model_name = model_name or os.getenv("MODEL_NAME", "xiaomi/mimo-v2-flash:free")
+        self._api_key = config.llm.api_key or os.getenv("OPENROUTER_API_KEY")
+        self._base_url = config.llm.base_url or os.getenv("OPENROUTER_BASE_URL")
+        self._model_name = model_name or config.llm.model_name
+        self._simulation_id = simulation_id or config.simulation.simulation_id
         
         # Initialize the LLM
         self.llm = ChatOpenAI(
@@ -81,20 +98,20 @@ class Archon(ArchonInterface):
             temperature=temperature
         )
         
-        # Langfuse handler for tracing (only if enabled and available)
+        # Langfuse handler for tracing
         self.langfuse_handler = None
-        if enable_tracing:
+        if enable_tracing and LANGFUSE_AVAILABLE:
             try:
                 self.langfuse_handler = CallbackHandler()
             except Exception as e:
-                logger.warning(f"Langfuse tracing not available: {e}. Continuing without tracing.")
-                self.langfuse_handler = None
+                logger.warning(f"Langfuse tracing not available: {e}")
         
         # Initialize Logic Engines
-        self.feasibility_engine = FeasibilityEngine()
+        self.feasibility_engine = FeasibilityEngine(simulation_id=self._simulation_id)
+        self.spatial_checker = SpatialConstraintChecker(simulation_id=self._simulation_id)
         
         # Memory References (Injected by Engine)
-        self.memory_bank: Optional[ChromaDBMemoryBank] = None
+        self.memory_bank = None  # Will be LanceDBMemoryBank or ChromaDBMemoryBank
         self.memory_stream: Optional[MemoryStream] = None
         
         # Agent Cache (preserves state across cycles)
@@ -108,14 +125,14 @@ class Archon(ArchonInterface):
 
     def set_memory_systems(
         self, 
-        memory_bank: ChromaDBMemoryBank, 
+        memory_bank, 
         memory_stream: MemoryStream
     ) -> None:
         """
         Receive memory instances from the Engine.
         
         Args:
-            memory_bank: ChromaDB-backed associative memory
+            memory_bank: LanceDB or ChromaDB-backed associative memory
             memory_stream: Chronological event log
         """
         self.memory_bank = memory_bank
@@ -123,13 +140,15 @@ class Archon(ArchonInterface):
         logger.info("Archon connected to Memory Bank and Stream")
     
     def _build_workflow(self) -> StateGraph:
-        """Build the LangGraph workflow."""
+        """Build the LangGraph workflow with interrupt support."""
         workflow = StateGraph(AgentState)
         
+        # Add nodes
         workflow.add_node("perception", self._actor_perception_node)
         workflow.add_node("feasibility", self._feasibility_check_node)
         workflow.add_node("adjudication", self._archon_adjudication_node)
         
+        # Set entry point and edges
         workflow.set_entry_point("perception")
         workflow.add_edge("perception", "feasibility")
         workflow.add_edge("feasibility", "adjudication")
@@ -175,27 +194,117 @@ class Archon(ArchonInterface):
         
         return self._agent_cache[actor_id]
     
+    def _generate_perception_sphere(
+        self,
+        actor: Actor,
+        world_state: WorldState
+    ) -> Dict[str, Any]:
+        """
+        Generate spatial perception context for an actor using DuckDB.
+        
+        This creates a "perception sphere" around the actor's location,
+        finding nearby entities and terrain features.
+        
+        Args:
+            actor: The actor to generate perception for
+            world_state: Current world state
+        
+        Returns:
+            Dict with perception data (nearby entities, terrain, etc.)
+        """
+        perception = {
+            "nearby_actors": [],
+            "nearby_assets": [],
+            "terrain": None,
+            "controlled_assets": []
+        }
+        
+        # Get actor location
+        if actor.location:
+            lon, lat = actor.location.lon, actor.location.lat
+            
+            try:
+                # Get nearby entities using DuckDB spatial query
+                state_manager = get_state_manager(self._simulation_id)
+                config = get_config()
+                radius = config.simulation.perception_radius_degrees
+                
+                nearby = state_manager.get_entities_within_distance(
+                    center_lon=lon,
+                    center_lat=lat,
+                    distance_degrees=radius
+                )
+                
+                for entity in nearby:
+                    if entity['entity_type'] == 'actor' and entity['id'] != actor.actor_id:
+                        perception['nearby_actors'].append({
+                            'id': entity['id'],
+                            'name': entity['name'],
+                            'distance': entity['distance'],
+                            'distance_km': entity['distance'] * 111  # Approx conversion
+                        })
+                    elif entity['entity_type'] == 'asset':
+                        perception['nearby_assets'].append({
+                            'id': entity['id'],
+                            'name': entity['name'],
+                            'distance': entity['distance'],
+                            'status': entity['status']
+                        })
+                
+                # Get terrain at location
+                terrain = state_manager.get_terrain_at_point(lon, lat)
+                if terrain:
+                    perception['terrain'] = {
+                        'type': terrain['terrain_type'],
+                        'name': terrain['name'],
+                        'movement_cost': terrain['movement_cost'],
+                        'passable': terrain['passable']
+                    }
+                    
+            except Exception as e:
+                logger.warning(f"Could not generate perception sphere: {e}")
+        
+        # Add controlled assets from world state
+        for asset_id in actor.assets:
+            if asset_id in world_state.assets:
+                asset = world_state.assets[asset_id]
+                perception['controlled_assets'].append({
+                    'id': asset_id,
+                    'name': asset.name,
+                    'type': asset.asset_type,
+                    'status': asset.status,
+                    'location': asset.location
+                })
+        
+        return perception
+    
     def _actor_perception_node(self, state: AgentState) -> AgentState:
         """
         Node 1: Actor Perception.
         
         Delegates to Agent Classes to generate intents using Memory & Personality.
+        Uses spatial perception sphere for context.
         """
         logger.info("--- NODE: ACTORS PERCEIVING ---")
         
         world = state["world_state"]
         actor_intents: Dict[str, str] = {}
         actor_errors: Dict[str, str] = {}
+        perception_context: Dict[str, Dict[str, Any]] = {}
         
         for actor_id, actor_data in world.actors.items():
             try:
-                # 1. Get or create agent instance (cached for state preservation)
+                # 1. Generate perception sphere using spatial queries
+                perception = self._generate_perception_sphere(actor_data, world)
+                perception_context[actor_id] = perception
+                
+                # 2. Get or create agent instance (cached for state preservation)
                 agent = self._get_or_create_agent(actor_id, actor_data)
                 
-                # 2. Agent "Thinks" (Uses Memory + LLM + Relationships)
-                intent_obj = agent.generate_intent(world)
+                # 3. Agent "Thinks" (Uses Memory + LLM + Perception)
+                intent_obj = agent.generate_intent(world, context=perception)
                 
-                # 3. Store result
+                # 4. Store result
                 actor_intents[actor_id] = intent_obj.content
                 logger.info(f"   > {actor_id} intent: {intent_obj.content[:50]}...")
                 
@@ -203,10 +312,10 @@ class Archon(ArchonInterface):
                 error_msg = f"Error in agent {actor_id}: {str(e)}"
                 actor_errors[actor_id] = error_msg
                 logger.error(error_msg, exc_info=True)
-                # Don't store error as intent - keep it separate
         
         state["actor_intents"] = actor_intents
         state["actor_errors"] = actor_errors
+        state["perception_context"] = perception_context
         return state
 
     def _feasibility_check_node(self, state: AgentState) -> AgentState:
@@ -214,6 +323,7 @@ class Archon(ArchonInterface):
         Node 2: Feasibility Check.
         
         Filters hallucinations using physics/budget constraints.
+        Uses DuckDB spatial queries for movement validation.
         """
         logger.info("--- NODE: FEASIBILITY CHECK ---")
         world = state["world_state"]
@@ -224,7 +334,7 @@ class Archon(ArchonInterface):
             if actor_id in state.get("actor_errors", {}):
                 continue
             
-            # Run the feasibility engine
+            # Run the feasibility engine (now includes spatial checks)
             report = self.feasibility_engine.check_feasibility(
                 intent=intent_text,
                 world_state=world,
@@ -254,16 +364,28 @@ class Archon(ArchonInterface):
         # Construct summary string including feasibility warnings and errors
         intent_summary_lines = []
         
-        # Add successful intents
+        # Add successful intents with perception context
         for aid, text in state["actor_intents"].items():
             report = state["feasibility_reports"].get(aid)
+            perception = state.get("perception_context", {}).get(aid, {})
+            
+            # Build context string
+            context_parts = []
+            if perception.get('terrain'):
+                context_parts.append(f"terrain: {perception['terrain']['type']}")
+            if perception.get('nearby_actors'):
+                nearby = ", ".join([a['name'] for a in perception['nearby_actors'][:3]])
+                context_parts.append(f"nearby actors: {nearby}")
+            
+            context_str = f" [{', '.join(context_parts)}]" if context_parts else ""
+            
             if report and not report.feasible:
                 violations = "; ".join([v.get('message', '') for v in report.violations])
                 intent_summary_lines.append(
-                    f"{aid}: ATTEMPTED '{text}' BUT FAILED due to: {violations}"
+                    f"{aid}{context_str}: ATTEMPTED '{text}' BUT FAILED due to: {violations}"
                 )
             else:
-                intent_summary_lines.append(f"{aid}: {text}")
+                intent_summary_lines.append(f"{aid}{context_str}: {text}")
         
         # Add errors
         for aid, error_msg in state.get("actor_errors", {}).items():
@@ -274,11 +396,12 @@ class Archon(ArchonInterface):
         # System Prompt
         system_prompt = (
             "You are the Archon, the omniscient referee of a simulation. "
-            "Adjudicate the cycle based on Actor Intents and Feasibility Reports. "
-            "1. If an action failed feasibility, describe the failure in the narrative. "
+            "Adjudicate the cycle based on Actor Intents, Feasibility Reports, and Spatial Context. "
+            "1. If an action failed feasibility (blocked by terrain, distance, etc.), describe the failure. "
             "2. If an actor had an error, note it but continue with other actors. "
-            "3. Update the Global Events log. "
-            "4. Describe any environmental shifts (weather, etc)."
+            "3. Consider spatial relationships and terrain when describing outcomes. "
+            "4. Update the Global Events log. "
+            "5. Describe any environmental shifts (weather, etc)."
         )
         
         user_prompt = (
@@ -315,6 +438,7 @@ class Archon(ArchonInterface):
                     "feasibility_reports": {
                         k: v.to_dict() for k, v in state["feasibility_reports"].items()
                     },
+                    "perception_context": state.get("perception_context", {}),
                     "errors": state.get("actor_errors", {})
                 }
             )
@@ -326,6 +450,7 @@ class Archon(ArchonInterface):
             "feasibility_reports": {
                 k: v.to_dict() for k, v in state["feasibility_reports"].items()
             },
+            "perception_context": state.get("perception_context", {}),
             "errors": state.get("actor_errors", {}),
             "summary": summary,
             "timestamp": datetime.now().isoformat()
@@ -349,8 +474,10 @@ class Archon(ArchonInterface):
             "actor_intents": {}, 
             "actor_errors": {},
             "feasibility_reports": {},
+            "perception_context": {},
             "archon_summary": "",
-            "rationales": []
+            "rationales": [],
+            "interrupted": False
         }
         
         final_output = self._compiled_graph.invoke(brain_input)

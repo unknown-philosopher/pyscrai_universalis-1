@@ -1,43 +1,46 @@
-# PyScrAI Universalis - Developer Onboarding Guide
+# GeoScrAI / PyScrAI Universalis - Developer Guide
 
-Welcome to **PyScrAI Universalis**, an agnostic linguistic simulation engine that enables multi-resolution agent-based simulations with memory-driven behavior and LLM-powered decision-making.
+Welcome to **GeoScrAI** (formerly PyScrAI Universalis), a spatial linguistic simulation engine that enables multi-resolution agent-based simulations with memory-driven behavior, LLM-powered decision-making, and real-time geographic constraints.
 
 ## Table of Contents
 
-- [What is PyScrAI?](#what-is-pyscrai)
+- [What is GeoScrAI?](#what-is-geoscrai)
 - [Architecture Overview](#architecture-overview)
 - [Quick Start](#quick-start)
 - [Development Setup](#development-setup)
 - [Project Structure](#project-structure)
 - [Key Concepts](#key-concepts)
 - [Running Simulations](#running-simulations)
-- [Extending PyScrAI](#extending-pyscrai)
+- [Extending GeoScrAI](#extending-geoscrai)
 - [API Reference](#api-reference)
-- [Contributing](#contributing)
 
-## What is PyScrAI?
+## What is GeoScrAI?
 
-PyScrAI Universalis is a simulation engine that combines:
+GeoScrAI is a "Data-Driven Monolith" that combines:
 
-- **Multi-Resolution Agents**: Both "Macro" (strategic/organizational) and "Micro" (individual/social) agents coexist in the same simulation
-- **Memory-Driven Behavior**: ChromaDB-backed associative memory with semantic retrieval, scoping, and pruning
-- **LLM-Powered Adjudication**: The "Archon" uses language models to adjudicate actions and simulate outcomes
-- **Fractal Design**: Agents can operate at different scales simultaneously, enabling complex emergent behaviors
+- **Spatial State Management**: DuckDB with spatial extension for geographic queries
+- **Semantic Memory**: LanceDB for vector-based associative memory with Arrow integration
+- **Multi-Resolution Agents**: Both "Macro" (strategic) and "Micro" (individual) agents
+- **LLM-Powered Adjudication**: The "Archon" uses language models with spatial context
+- **Real-Time UI**: NiceGUI-based interface with live map updates
 
-### Use Cases
+### Key Differences from Previous Architecture
 
-- **Crisis Simulation**: Model organizational responses to emergencies (wildfires, disasters)
-- **Social Simulation**: Simulate individual agents with relationships, memories, and personal goals
-- **Policy Analysis**: Test policy decisions in a simulated environment with realistic agent behavior
-- **Training Scenarios**: Create dynamic training environments for decision-makers
+| Feature | Old (MongoDB/ChromaDB) | New (DuckDB/LanceDB) |
+|---------|------------------------|----------------------|
+| State Storage | MongoDB (Document Store) | DuckDB (OLAP SQL + Spatial) |
+| Memory | ChromaDB (HTTP/Local) | LanceDB (Native Vector) |
+| Physics | Python constraint functions | SQL spatial queries |
+| UI | FastAPI + Flet (Polling) | NiceGUI (WebSocket) |
+| Loop | Mesa (ABM Framework) | Asyncio (Interruptible) |
 
 ## Architecture Overview
 
-PyScrAI follows a **Triad Architecture** with three distinct layers:
+GeoScrAI follows a **Triad Architecture** with three distinct layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    PyScrAI Universalis                       │
+│                    GeoScrAI Universalis                      │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
@@ -45,44 +48,42 @@ PyScrAI follows a **Triad Architecture** with three distinct layers:
 │  │ (Design Time)│  │ (Run Time)   │  │  (UI/API)    │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 │                                                              │
-│  • World Builder  │  • Simulation  │  • FastAPI Server     │
-│  • Validator      │  • Archon      │  • Dashboard          │
-│  • Seeder         │  • Agents      │  • Map/Visualization  │
-│  • Pipeline       │  • Memory      │                       │
-│                   │  • Engine      │                       │
+│  • Schema Init   │  • Simulation  │  • NiceGUI App        │
+│  • Seeder        │  • Archon      │  • Map Visualization  │
+│  • Validator     │  • Agents      │  • God Mode Controls  │
+│  • Builder       │  • Memory      │                       │
+│                  │  • DuckDB State│                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### The Triad Layers
+### Data Flow
 
-#### 1. **Architect** (`pyscrai/architect/`)
-Design-time tools for creating and validating simulation worlds:
-- **Builder**: Fluent API for creating `.WORLD` and `.SCENARIO` files
-- **Validator**: Multi-level validation (schema, type, constraint, contextual)
-- **Seeder**: Database initialization with scenario data
-- **Pipeline**: Compiles `.WORLD` (base) + `.SCENARIO` (delta) → `WorldState`
-
-#### 2. **Universalis** (`pyscrai/universalis/`)
-Run-time simulation engine:
-- **Engine**: Mesa-based simulation clock and cycle management
-- **Archon**: Omniscient adjudicator using LangGraph + LLM
-- **Agents**: Macro (strategic) and Micro (social) agent implementations
-- **Memory**: ChromaDB-backed associative memory with scoping and pruning
-
-#### 3. **Forge** (`pyscrai/forge/`)
-UI/API layer for controlling and visualizing simulations:
-- **App**: FastAPI REST endpoints for simulation control
-- **Dashboard**: Unified viewport with Macro/Micro resolution toggle
-- **Components**: Map, timeline, event log, status bar
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   DuckDB    │────▶│  WorldState  │────▶│   Archon    │
+│  (Spatial)  │     │  (Pydantic)  │     │ (LangGraph) │
+└─────────────┘     └──────────────┘     └─────────────┘
+       │                   │                    │
+       │                   │                    ▼
+       │                   │            ┌─────────────┐
+       │                   │            │   Agents    │
+       │                   │            │ (Macro/Micro)│
+       │                   │            └─────────────┘
+       │                   │                    │
+       ▼                   ▼                    ▼
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   LanceDB   │◀────│   Memory     │◀────│   Intents   │
+│  (Vectors)  │     │   Stream     │     │             │
+└─────────────┘     └──────────────┘     └─────────────┘
+```
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- MongoDB (running locally or remote)
-- (Optional) ChromaDB for persistent memory
-- LLM API key (OpenRouter, OpenAI, or local proxy)
+- No external databases required (DuckDB and LanceDB run embedded)
+- LLM API key (OpenRouter, OpenAI, or local)
 
 ### Installation
 
@@ -98,7 +99,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # Install PyScrAI in editable mode
-pip install -e pyscrai/
+pip install -e .
 ```
 
 ### Configuration
@@ -111,318 +112,250 @@ OPENROUTER_API_KEY=your_key_here
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 MODEL_NAME=xiaomi/mimo-v2-flash:free
 
-# MongoDB
-MONGO_URI=mongodb://localhost:27017/
-MONGO_DB_NAME=universalis_mongodb
+# Database (optional - defaults to local files)
+DUCKDB_PATH=./database/geoscrai.duckdb
+LANCEDB_PATH=./database/lancedb
 
-# Optional: Langfuse for observability
-LANGFUSE_PUBLIC_KEY=your_key
-LANGFUSE_SECRET_KEY=your_secret
-LANGFUSE_HOST=http://localhost:3000
+# UI
+HOST=0.0.0.0
+PORT=8080
 ```
 
 ### Run Your First Simulation
 
 ```bash
-# Seed the database with initial scenario
+# Seed and start with UI
 python -m pyscrai.main --seed
 
-# Start the simulation server
-python -m pyscrai.main --host 0.0.0.0 --port 8000
+# Or run in headless mode
+python -m pyscrai.main --seed --no-ui --cycles 10
 ```
 
-The API will be available at `http://localhost:8000`. Try:
+The UI will be available at `http://localhost:8080`.
 
-- `GET /` - Health check
-- `GET /state` - Current world state
-- `POST /simulation/tick` - Advance one cycle
-- `GET /simulation/info` - Simulation metadata
-
-## Development Setup
-
-### Project Structure
+## Project Structure
 
 ```
 pyscrai/
-├── architect/          # Design-time tools
-│   ├── builder.py     # World/Scenario builders
-│   ├── validator.py   # Multi-level validation
-│   ├── seeder.py      # Database seeding
-│   ├── pipeline.py    # Seed-to-state compilation
-│   └── context_validator.py  # Historical validation
+├── architect/           # Design-time tools
+│   ├── builder.py      # World/Scenario builders
+│   ├── validator.py    # Multi-level validation
+│   ├── seeder.py       # DuckDB seeding
+│   ├── schema_init.py  # Database initialization
+│   └── pipeline.py     # Seed-to-state compilation
 │
-├── universalis/        # Run-time engine
-│   ├── engine.py      # Mesa SimulationEngine
-│   ├── archon/        # Adjudication logic
-│   │   ├── interface.py
-│   │   ├── adjudicator.py
-│   │   └── feasibility.py
-│   ├── agents/        # Agent implementations
+├── universalis/         # Run-time engine
+│   ├── engine.py       # Async SimulationEngine
+│   ├── state/          # DuckDB state management
+│   │   └── duckdb_manager.py  # Spatial queries
+│   ├── archon/         # Adjudication logic
+│   │   ├── adjudicator.py     # LangGraph workflow
+│   │   ├── feasibility.py     # Constraint checking
+│   │   └── spatial_constraints.py  # SQL-based physics
+│   ├── agents/         # Agent implementations
 │   │   ├── macro_agent.py
 │   │   ├── micro_agent.py
-│   │   ├── llm_controller.py
-│   │   └── observation.py
-│   ├── memory/        # Memory system
-│   │   ├── associative.py  # ChromaDBMemoryBank
-│   │   ├── scopes.py       # Memory scoping
-│   │   ├── stream.py       # Event log
-│   │   └── pruning.py      # Memory maintenance
-│   └── environment/   # Physics/world simulation
+│   │   └── llm_provider.py
+│   └── memory/         # Memory system
+│       ├── lancedb_memory.py  # Vector memory
+│       ├── associative.py     # ChromaDB (legacy)
+│       ├── scopes.py
+│       └── stream.py
 │
-├── forge/             # UI/API layer
-│   ├── app.py         # FastAPI server
-│   └── dashboard/     # Visualization components
-│       ├── viewport.py
-│       ├── macro_view.py
-│       └── micro_view.py
+├── forge/              # UI layer
+│   └── ui.py           # NiceGUI application
 │
-├── data/              # Data storage
-│   ├── schemas/       # JSON schemas
-│   ├── worlds/        # .WORLD files
-│   └── scenarios/     # .SCENARIO files
+├── data/               # Data storage
+│   └── schemas/
+│       ├── models.py   # Pydantic models
+│       └── schema.sql  # DuckDB schema
 │
-├── utils/             # Shared utilities
-│   ├── logger.py
-│   └── converters.py
-│
-└── main.py            # Bootloader entry point
+├── config.py           # Configuration
+└── main.py             # Entry point
 ```
-
-### Running Tests
-
-```bash
-# Run all tests (when test suite is added)
-pytest tests/
-
-# Run with coverage
-pytest --cov=pyscrai tests/
-```
-
-### Code Style
-
-We follow PEP 8 with some exceptions:
-- Use type hints for all function signatures
-- Docstrings in Google style
-- Maximum line length: 100 characters
 
 ## Key Concepts
 
-### 1. World State
+### 1. Spatial State (DuckDB)
 
-The `WorldState` is the "ground truth" of the simulation:
+World state is stored in DuckDB with spatial extension:
 
-```python
-from pyscrai.data.schemas.models import WorldState
+```sql
+-- Entities table with GEOMETRY column
+SELECT * FROM entities 
+WHERE ST_DWithin(geometry, ST_Point(-118.25, 34.05), 0.1);
 
-world_state = WorldState(
-    simulation_id="Alpha_Scenario",
-    environment=Environment(cycle=0, time="08:00", weather="Clear"),
-    actors={...},  # Dict[str, Actor]
-    assets={...}   # Dict[str, Asset]
-)
+-- Check path blockage
+SELECT name FROM terrain 
+WHERE passable = FALSE 
+  AND ST_Intersects(geometry, ST_MakeLine(...));
 ```
 
-### 2. Agents
+### 2. Semantic Memory (LanceDB)
 
-**Macro Agents** (`MacroAgent`): Strategic, organizational-level decision makers
-- Manage multiple assets
-- Make policy-level decisions
-- Focus on objectives and resource allocation
+Associative memory with vector search and Arrow integration:
 
-**Micro Agents** (`MicroAgent`): Individual, socially-aware agents
-- Have personal memories and relationships
-- Make character-driven decisions
-- Respond to emotional states and social context
+```python
+from pyscrai.universalis.memory import LanceDBMemoryBank
 
-### 3. The Archon
+memory = LanceDBMemoryBank(simulation_id="MyScenario")
+memory.add("Observed fire spreading north", scope=MemoryScope.PRIVATE)
+relevant = memory.retrieve_associative("fire movement", k=5)
+```
 
-The Archon is the omniscient referee that:
-- Processes actor intents
-- Checks feasibility (budget, logistics, physical constraints)
-- Adjudicates outcomes using LLM reasoning
-- Generates rationales for traceability
+### 3. Spatial Constraints
 
-### 4. Memory System
+Physics enforced by database queries, not Python code:
 
-PyScrAI uses a hybrid memory architecture:
+```python
+from pyscrai.universalis.archon import SpatialConstraintChecker
 
-- **Associative Memory** (`ChromaDBMemoryBank`): Semantic retrieval using embeddings
-- **Memory Scopes**: PUBLIC, PRIVATE, SHARED_GROUP to prevent cross-agent interference
-- **Memory Stream**: Chronological event log for debugging and visualization
-- **Memory Pruning**: Automatic relevance decay and consolidation
+checker = SpatialConstraintChecker()
+
+# Check if movement is feasible
+result = checker.validate_movement(
+    entity_id="Truck_01",
+    target_lon=-118.30,
+    target_lat=34.10
+)
+# Returns: (passed: bool, [constraint_results])
+```
+
+### 4. God Mode (Interrupts)
+
+Simulation can be paused between phases:
+
+```python
+engine.pause()  # Pause at current cycle
+# Inspect/modify state
+engine.resume()  # Continue
+```
 
 ### 5. Resolution Toggle
 
-The dashboard can switch between:
-- **Macro View**: Strategic overview, metrics, policy impacts
-- **Micro View**: Individual agent inspection, memories, relationships
+Agents operate at different scales:
+- **Macro Agents**: Strategic, organizational-level
+- **Micro Agents**: Individual, social-level with relationships
 
 ## Running Simulations
 
-### Basic Usage
+### With UI
+
+```bash
+python -m pyscrai.main --seed
+```
+
+### Headless Mode
+
+```bash
+python -m pyscrai.main --no-ui --cycles 100
+```
+
+### Programmatic Usage
 
 ```python
+import asyncio
 from pyscrai.universalis.engine import SimulationEngine
-from pyscrai.universalis.archon.adjudicator import Archon
+from pyscrai.universalis.archon import Archon
 from pyscrai.architect.seeder import seed_simulation
 
-# Seed the database
+# Seed database
 seed_simulation(simulation_id="MyScenario")
 
-# Initialize engine with Archon
+# Initialize
 archon = Archon()
 engine = SimulationEngine(sim_id="MyScenario")
 engine.attach_archon(archon)
 
 # Run cycles
-for _ in range(10):
-    result = engine.step()
-    print(f"Cycle {result['cycle']}: {result['summary']}")
+async def run():
+    for _ in range(10):
+        result = await engine.async_step()
+        print(f"Cycle {result['cycle']}: {result['summary']}")
+
+asyncio.run(run())
 ```
 
-### Creating Custom Scenarios
+## Extending GeoScrAI
+
+### Adding Custom Terrain
 
 ```python
-from pyscrai.architect.builder import ScenarioBuilder
+from pyscrai.data.schemas.models import Terrain, TerrainType
 
-builder = ScenarioBuilder("my_scenario", "My Custom Scenario", world_id="base_world")
-builder.set_description("A custom scenario for testing")
-builder.set_initial_conditions(cycle=0, time="06:00", weather="Rainy")
-builder.add_actor(
-    actor_id="Actor_Mayor",
-    role="City Mayor",
-    description="Responsible for city-wide decisions",
-    resolution="macro",
-    objectives=["Protect citizens", "Manage resources"]
+terrain = Terrain(
+    terrain_id="custom_mountains",
+    name="Rocky Mountains",
+    terrain_type=TerrainType.MOUNTAINS,
+    geometry_wkt="POLYGON((-105 39, -104 39, -104 40, -105 40, -105 39))",
+    movement_cost=3.0,
+    passable=True
 )
-builder.add_asset(
-    asset_id="Truck_01",
-    name="Emergency Response Vehicle",
-    asset_type="Ground Unit",
-    lat=34.05,
-    lon=-118.25
-)
-builder.save()
+
+state_manager.add_terrain(terrain)
 ```
 
-### Using the API
+### Custom Spatial Constraints
 
 ```python
-import requests
-
-# Start simulation
-response = requests.post("http://localhost:8000/simulation/tick")
-print(response.json())
-# {"cycle": 1, "status": "Adjudicated", "summary": "..."}
-
-# Get current state
-state = requests.get("http://localhost:8000/state").json()
-print(f"Cycle: {state['environment']['cycle']}")
-```
-
-## Extending PyScrAI
-
-### Adding Custom Constraints
-
-Extend the `FeasibilityEngine`:
-
-```python
-from pyscrai.universalis.archon.feasibility import FeasibilityEngine, Constraint, ConstraintType
+from pyscrai.universalis.archon.feasibility import FeasibilityEngine, Constraint
 
 engine = FeasibilityEngine()
 
-# Add custom constraint
-def check_custom_constraint(intent: str, world_state: WorldState) -> bool:
-    # Your validation logic
+def check_weather_constraint(intent: str, world_state) -> bool:
+    if "fly" in intent.lower() and world_state.environment.weather == "Storm":
+        return False
     return True
 
 engine.register_constraint(Constraint(
-    name="custom_check",
-    constraint_type=ConstraintType.POLICY,
-    check_fn=check_custom_constraint,
-    error_message="Custom constraint violated"
+    name="weather_flying",
+    constraint_type=ConstraintType.PHYSICAL,
+    check_fn=check_weather_constraint,
+    error_message="Cannot fly in storm conditions"
 ))
-```
-
-### Creating Custom Agent Types
-
-```python
-from pyscrai.universalis.agents.macro_agent import MacroAgent, MacroAgentConfig
-from pyscrai.data.schemas.models import Actor
-
-class CustomMacroAgent(MacroAgent):
-    def generate_intent(self, world_state, context=None):
-        # Override with custom logic
-        intent = super().generate_intent(world_state, context)
-        # Modify intent...
-        return intent
 ```
 
 ### Adding Dashboard Components
 
-```python
-from pyscrai.forge.dashboard.components import MapComponent
+The NiceGUI app can be extended in `pyscrai/forge/ui.py`:
 
-map_component = MapComponent()
-map_component.update_from_world_state(world_state)
-map_data = map_component.get_render_data()
+```python
+@ui.page('/custom')
+def custom_page():
+    with ui.card():
+        ui.label("Custom Analysis")
+        # Add custom visualizations
 ```
 
 ## API Reference
 
 ### Core Classes
 
-- `SimulationEngine`: Main simulation engine
-- `Archon`: Adjudication system
-- `MacroAgent` / `MicroAgent`: Agent implementations
-- `ChromaDBMemoryBank`: Memory storage
-- `WorldBuilder` / `ScenarioBuilder`: World creation tools
-- `UnifiedViewport`: Dashboard viewport
+- `SimulationEngine`: Async simulation engine with DuckDB backend
+- `DuckDBStateManager`: Spatial state storage and queries
+- `LanceDBMemoryBank`: Vector memory with Arrow integration
+- `Archon`: LangGraph-based adjudication with spatial context
+- `SpatialConstraintChecker`: SQL-based physics validation
 
 ### Key Functions
 
-- `seed_simulation()`: Initialize database
-- `validate_world()` / `validate_scenario()`: Validation
-- `create_viewport()`: Dashboard initialization
+- `seed_simulation()`: Initialize DuckDB with scenario
+- `init_database()`: Create schema and load extensions
+- `create_app()` / `run_app()`: NiceGUI application
 
-See docstrings in source files for detailed API documentation.
+## Migration Notes
 
-## Contributing
+If migrating from the MongoDB/ChromaDB version:
 
-### Development Workflow
-
-1. **Create a feature branch**: `git checkout -b feature/my-feature`
-2. **Make changes**: Follow code style and add tests
-3. **Test locally**: Ensure all tests pass
-4. **Submit PR**: Include description of changes
-
-### Areas for Contribution
-
-- **New Agent Types**: Implement specialized agent behaviors
-- **Memory Strategies**: Alternative memory implementations
-- **Visualization**: Enhanced dashboard components
-- **Validation Rules**: Additional constraint validators
-- **Documentation**: Examples, tutorials, API docs
-
-### Questions?
-
-- Check existing issues on GitHub
-- Review the master development plan in `.cursor/plans/`
-- Examine example code in `pyscrai_deprecated/` for reference
+1. **No external services needed**: DuckDB and LanceDB run embedded
+2. **Data migration**: Use `seed_simulation()` to create new data
+3. **Constraint changes**: Update custom constraints to use spatial queries
+4. **UI changes**: FastAPI endpoints replaced by NiceGUI pages
 
 ## License
 
 [Add your license here]
 
-## Acknowledgments
-
-PyScrAI Universalis integrates concepts from:
-- **Concordia**: Memory and LLM abstraction patterns
-- **Mesa**: Agent-based modeling framework
-- **LangGraph**: Workflow orchestration
-- **ChromaDB**: Vector database for semantic memory
-
 ---
 
-**Welcome to PyScrAI!** Start by running `python -m pyscrai.main --seed` and exploring the codebase. Happy simulating! 🚀
-
+**Welcome to GeoScrAI!** Start with `python -m pyscrai.main --seed` and explore the spatial simulation capabilities.
