@@ -1,0 +1,15 @@
+langchain
+langchain-openai
+langgraph
+mesa
+pydantic
+pydantic-ai
+fastapi
+uvicorn
+litellm
+python-dotenv
+pymongo
+chromadb
+flet
+flet-map
+langfuse 

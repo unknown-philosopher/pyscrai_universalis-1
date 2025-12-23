@@ -17,3 +17,5 @@ mongod --dbpath="D:\dev_2\pyscrai_universalis\database\mongoDB"
 @REM start "" "C:\Users\tyler\AppData\Local\MongoDBCompass\MongoDBCompass.exe"
 
 @REM docker run --name=pyscrai-chromadb --hostname=0dd174c70ce6 --env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --env=ASAN_OPTIONS= --env=ASAN_SYMBOLIZER_PATH= --env=RUST_BACKTRACE=0 --volume=D:\dev_2\pyscrai_universalis\database\chroma-data:/data --network=bridge -p 8000:8000 --restart=no --runtime=runc -d chromadb/chroma
+
+

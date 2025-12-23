@@ -1,5 +1,5 @@
 """
-LLM Provider - LangChain/OpenRouter adapter for PyScrAI Universalis.
+LLM Provider - LangChain/OpenRouter adapter for PyScrAI.
 
 This module provides concrete implementations of the LanguageModel interface
 using LangChain with OpenRouter as the backend.

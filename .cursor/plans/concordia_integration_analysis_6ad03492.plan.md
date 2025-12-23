@@ -206,5 +206,3 @@ PyScrAI Universalis is a turn-based simulation engine using Mesa (simulation clo
 ## Questions to Resolve
 
 1. **Memory Backend**: Use Concordia's pandas-based memory or adapt for ChromaDB?
-2. **Integration Depth**: Full component system or selective adoption?
-3. **State Persistence**: How to bridge Concordia's component state with MongoDB?

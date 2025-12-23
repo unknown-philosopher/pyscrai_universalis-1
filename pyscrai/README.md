@@ -88,7 +88,7 @@ UI/API layer for controlling and visualizing simulations:
 
 ```bash
 # Clone the repository
-cd pyscrai_universalis
+cd pyscrai
 
 # Create virtual environment
 python -m venv .venv

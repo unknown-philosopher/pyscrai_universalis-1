@@ -63,10 +63,16 @@ class ChromaDBMemoryBank:
         # Initialize ChromaDB client
         if chroma_host and chroma_port:
             # HTTP client for remote ChromaDB
-            self._client = chromadb.HttpClient(
-                host=chroma_host,
-                port=chroma_port
-            )
+            try:
+                self._client = chromadb.HttpClient(
+                    host=chroma_host,
+                    port=chroma_port
+                )
+                # Test connection by trying to list collections
+                self._client.list_collections()
+            except Exception as e:
+                logger.warning(f"ChromaDB HTTP client connection failed: {e}")
+                raise  # Re-raise so caller can handle fallback
         elif persist_directory:
             # Persistent local client
             self._client = chromadb.PersistentClient(
@@ -80,10 +86,14 @@ class ChromaDBMemoryBank:
         self._embedding_function = embedding_function
         
         # Get or create collection
-        self._collection = self._client.get_or_create_collection(
-            name=f"{self._collection_name}_{self._simulation_id}",
-            metadata={"simulation_id": self._simulation_id}
-        )
+        try:
+            self._collection = self._client.get_or_create_collection(
+                name=f"{self._collection_name}_{self._simulation_id}",
+                metadata={"simulation_id": self._simulation_id}
+            )
+        except Exception as e:
+            logger.error(f"Failed to create ChromaDB collection: {e}")
+            raise
         
         logger.info(f"ChromaDB memory bank initialized: {self._collection_name}_{self._simulation_id}")
     

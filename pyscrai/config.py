@@ -24,8 +24,10 @@ class DatabaseConfig:
 class ChromaDBConfig:
     """ChromaDB configuration."""
     host: str = field(default_factory=lambda: os.getenv("CHROMA_HOST", "localhost"))
-    port: int = field(default_factory=lambda: int(os.getenv("CHROMA_PORT", "8001")))
+    port: int = field(default_factory=lambda: int(os.getenv("CHROMA_PORT", "8000")))
     collection_name: str = field(default_factory=lambda: os.getenv("CHROMA_COLLECTION", "pyscrai_memories"))
+    persist_directory: Optional[str] = field(default_factory=lambda: os.getenv("CHROMA_PERSIST_DIR", None))
+    use_http: bool = field(default_factory=lambda: os.getenv("CHROMA_USE_HTTP", "true").lower() == "true")
 
 
 @dataclass

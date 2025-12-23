@@ -2,13 +2,14 @@
 Archon Adjudicator - The omniscient referee of PyScrAI Universalis.
 
 This module contains the LangGraph-based adjudication logic that:
-1. Processes actor perceptions and generates intents
-2. Adjudicates actions and resolves conflicts
-3. Updates world state based on outcomes
+1. Orchestrates Agent Perception (delegating to Agent classes)
+2. Checks Feasibility (using FeasibilityEngine)
+3. Adjudicates outcomes and Updates world state
 """
 
 import os
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, Union
+from datetime import datetime
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
@@ -16,8 +17,17 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langfuse.langchain import CallbackHandler
 from langgraph.graph import StateGraph, END
 
-from pyscrai.data.schemas.models import WorldState
-from pyscrai.universalis.archon.interface import ArchonInterface, AdjudicationResult
+from pyscrai.data.schemas.models import WorldState, ResolutionType, Actor
+from pyscrai.universalis.archon.interface import (
+    ArchonInterface, 
+    AdjudicationResult, 
+    FeasibilityReport
+)
+from pyscrai.universalis.archon.feasibility import FeasibilityEngine
+from pyscrai.universalis.agents.macro_agent import MacroAgent, create_macro_agent
+from pyscrai.universalis.agents.micro_agent import MicroAgent, create_micro_agent
+from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.universalis.memory.stream import MemoryStream
 from pyscrai.utils.logger import get_logger
 
 # Load environment variables
@@ -29,7 +39,9 @@ logger = get_logger(__name__)
 class AgentState(TypedDict):
     """State passed through the LangGraph workflow."""
     world_state: WorldState
-    actor_intents: List[str]
+    actor_intents: Dict[str, str]  # Map actor_id -> intent string
+    actor_errors: Dict[str, str]  # Map actor_id -> error message
+    feasibility_reports: Dict[str, FeasibilityReport]  # Map actor_id -> report
     archon_summary: str
     rationales: List[Dict[str, Any]]
 
@@ -38,8 +50,8 @@ class Archon(ArchonInterface):
     """
     The Archon - omniscient referee of the simulation.
     
-    Implements the ArchonInterface and provides LangGraph-based
-    adjudication logic.
+    Orchestrates agent perception, feasibility checking, and adjudication
+    using LangGraph workflow.
     """
     
     def __init__(
@@ -69,110 +81,214 @@ class Archon(ArchonInterface):
             temperature=temperature
         )
         
-        # Langfuse handler for tracing
-        self.langfuse_handler = CallbackHandler() if enable_tracing else None
+        # Langfuse handler for tracing (only if enabled and available)
+        self.langfuse_handler = None
+        if enable_tracing:
+            try:
+                self.langfuse_handler = CallbackHandler()
+            except Exception as e:
+                logger.warning(f"Langfuse tracing not available: {e}. Continuing without tracing.")
+                self.langfuse_handler = None
         
-        # Build the LangGraph workflow
+        # Initialize Logic Engines
+        self.feasibility_engine = FeasibilityEngine()
+        
+        # Memory References (Injected by Engine)
+        self.memory_bank: Optional[ChromaDBMemoryBank] = None
+        self.memory_stream: Optional[MemoryStream] = None
+        
+        # Agent Cache (preserves state across cycles)
+        self._agent_cache: Dict[str, Union[MacroAgent, MicroAgent]] = {}
+        
+        # Build the Graph
         self._workflow = self._build_workflow()
         self._compiled_graph = self._workflow.compile()
         
         logger.info(f"Archon initialized with model: {self._model_name}")
+
+    def set_memory_systems(
+        self, 
+        memory_bank: ChromaDBMemoryBank, 
+        memory_stream: MemoryStream
+    ) -> None:
+        """
+        Receive memory instances from the Engine.
+        
+        Args:
+            memory_bank: ChromaDB-backed associative memory
+            memory_stream: Chronological event log
+        """
+        self.memory_bank = memory_bank
+        self.memory_stream = memory_stream
+        logger.info("Archon connected to Memory Bank and Stream")
     
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow."""
         workflow = StateGraph(AgentState)
         
         workflow.add_node("perception", self._actor_perception_node)
+        workflow.add_node("feasibility", self._feasibility_check_node)
         workflow.add_node("adjudication", self._archon_adjudication_node)
         
         workflow.set_entry_point("perception")
-        workflow.add_edge("perception", "adjudication")
+        workflow.add_edge("perception", "feasibility")
+        workflow.add_edge("feasibility", "adjudication")
         workflow.add_edge("adjudication", END)
         
         return workflow
+    
+    def _get_or_create_agent(
+        self, 
+        actor_id: str, 
+        actor_data: Actor
+    ) -> Union[MacroAgent, MicroAgent]:
+        """
+        Get cached agent instance or create new one.
+        
+        Preserves agent state (relationships, internal state) across cycles.
+        
+        Args:
+            actor_id: Unique actor identifier
+            actor_data: Actor model data
+        
+        Returns:
+            Agent instance (MacroAgent or MicroAgent)
+        """
+        if actor_id not in self._agent_cache:
+            # Determine resolution with defensive check
+            resolution = getattr(actor_data, 'resolution', ResolutionType.MACRO)
+            
+            if resolution == ResolutionType.MICRO:
+                agent = create_micro_agent(
+                    actor_data,
+                    memory_bank=self.memory_bank,
+                    memory_stream=self.memory_stream
+                )
+            else:
+                agent = create_macro_agent(
+                    actor_data,
+                    memory_bank=self.memory_bank
+                )
+            
+            self._agent_cache[actor_id] = agent
+            logger.debug(f"Created new {resolution.value} agent for {actor_id}")
+        
+        return self._agent_cache[actor_id]
     
     def _actor_perception_node(self, state: AgentState) -> AgentState:
         """
         Node 1: Actor Perception.
         
-        Each actor perceives the world and generates their intent.
+        Delegates to Agent Classes to generate intents using Memory & Personality.
         """
         logger.info("--- NODE: ACTORS PERCEIVING ---")
         
         world = state["world_state"]
-        env = world.environment
-        all_intents = []
+        actor_intents: Dict[str, str] = {}
+        actor_errors: Dict[str, str] = {}
         
-        # Loop through all actors in the simulation
-        for actor_id, actor in world.actors.items():
-            # Build Context Strings
-            recent_events = "\n- ".join(env.global_events[-3:]) if env.global_events else "None"
-            asset_list = ", ".join(actor.assets) if actor.assets else "None"
-            objectives_list = "\n- ".join(actor.objectives) if actor.objectives else "None"
-            
-            # Construct the Prompt
-            prompt_content = (
-                f"You are {actor.role} (ID: {actor_id}).\n"
-                f"Description: {actor.description}\n"
-                f"Objectives:\n- {objectives_list}\n"
-                f"Assets under command: {asset_list}\n\n"
-                f"Current Situation:\n"
-                f"- Cycle: {env.cycle}\n"
-                f"- Time: {env.time}\n"
-                f"- Weather: {env.weather}\n"
-                f"- Recent Events:\n- {recent_events}\n\n"
-                "Based on your role and the situation, what is your strategic intent for this cycle? "
-                "Be concise. Refer to your assets by name if moving them."
-            )
-            
+        for actor_id, actor_data in world.actors.items():
             try:
-                # Invoke LLM
-                config = {"callbacks": [self.langfuse_handler]} if self.langfuse_handler else {}
-                response = self.llm.invoke(
-                    [HumanMessage(content=prompt_content)],
-                    config=config
-                )
+                # 1. Get or create agent instance (cached for state preservation)
+                agent = self._get_or_create_agent(actor_id, actor_data)
                 
-                intent_str = f"{actor_id}: {response.content}"
-                all_intents.append(intent_str)
-                logger.info(f"   > {actor_id} decided: {response.content[:50]}...")
+                # 2. Agent "Thinks" (Uses Memory + LLM + Relationships)
+                intent_obj = agent.generate_intent(world)
+                
+                # 3. Store result
+                actor_intents[actor_id] = intent_obj.content
+                logger.info(f"   > {actor_id} intent: {intent_obj.content[:50]}...")
                 
             except Exception as e:
-                error_msg = f"{actor_id} failed to act: {str(e)}"
-                all_intents.append(error_msg)
-                logger.error(error_msg)
+                error_msg = f"Error in agent {actor_id}: {str(e)}"
+                actor_errors[actor_id] = error_msg
+                logger.error(error_msg, exc_info=True)
+                # Don't store error as intent - keep it separate
         
-        state["actor_intents"] = all_intents
+        state["actor_intents"] = actor_intents
+        state["actor_errors"] = actor_errors
+        return state
+
+    def _feasibility_check_node(self, state: AgentState) -> AgentState:
+        """
+        Node 2: Feasibility Check.
+        
+        Filters hallucinations using physics/budget constraints.
+        """
+        logger.info("--- NODE: FEASIBILITY CHECK ---")
+        world = state["world_state"]
+        reports: Dict[str, FeasibilityReport] = {}
+        
+        for actor_id, intent_text in state["actor_intents"].items():
+            # Skip feasibility check if actor had an error
+            if actor_id in state.get("actor_errors", {}):
+                continue
+            
+            # Run the feasibility engine
+            report = self.feasibility_engine.check_feasibility(
+                intent=intent_text,
+                world_state=world,
+                actor_id=actor_id
+            )
+            reports[actor_id] = report
+            
+            if not report.feasible:
+                logger.warning(
+                    f"   ! {actor_id} Intent Infeasible: "
+                    f"{[v.get('message', '') for v in report.violations]}"
+                )
+        
+        state["feasibility_reports"] = reports
         return state
     
     def _archon_adjudication_node(self, state: AgentState) -> AgentState:
         """
-        Node 2: Archon Adjudication.
+        Node 3: Archon Adjudication.
         
-        The Archon reviews all intents and determines outcomes.
+        Resolves conflicts and updates world state.
         """
         logger.info("--- NODE: ARCHON ADJUDICATING ---")
         
         current_state = state["world_state"]
-        intents = "\n".join(state["actor_intents"])
         
-        # Construct the Prompt for the Archon
+        # Construct summary string including feasibility warnings and errors
+        intent_summary_lines = []
+        
+        # Add successful intents
+        for aid, text in state["actor_intents"].items():
+            report = state["feasibility_reports"].get(aid)
+            if report and not report.feasible:
+                violations = "; ".join([v.get('message', '') for v in report.violations])
+                intent_summary_lines.append(
+                    f"{aid}: ATTEMPTED '{text}' BUT FAILED due to: {violations}"
+                )
+            else:
+                intent_summary_lines.append(f"{aid}: {text}")
+        
+        # Add errors
+        for aid, error_msg in state.get("actor_errors", {}).items():
+            intent_summary_lines.append(f"{aid}: ERROR - {error_msg}")
+        
+        intents_block = "\n".join(intent_summary_lines)
+        
+        # System Prompt
         system_prompt = (
             "You are the Archon, the omniscient referee of a simulation. "
-            "Your goal is to adjudicate actor actions and simulate environmental shifts (Gaia). "
-            "Analyze the current state and the actor intents. "
-            "Output a concise summary of what happens next."
+            "Adjudicate the cycle based on Actor Intents and Feasibility Reports. "
+            "1. If an action failed feasibility, describe the failure in the narrative. "
+            "2. If an actor had an error, note it but continue with other actors. "
+            "3. Update the Global Events log. "
+            "4. Describe any environmental shifts (weather, etc)."
         )
         
         user_prompt = (
-            f"Current Cycle: {current_state.environment.cycle}\n"
-            f"Current Weather: {current_state.environment.weather}\n"
+            f"Cycle: {current_state.environment.cycle}\n"
+            f"Weather: {current_state.environment.weather}\n"
             f"Recent Events: {current_state.environment.global_events[-3:] if current_state.environment.global_events else 'None'}\n\n"
-            f"Actor Intents:\n{intents}\n\n"
-            "Adjudicate the result of this cycle:"
+            f"ACTOR ACTIONS:\n{intents_block}\n\n"
+            "Generate the Adjudication Result:"
         )
         
-        # Invoke the LLM with Langfuse Tracing
         try:
             config = {"callbacks": [self.langfuse_handler]} if self.langfuse_handler else {}
             response = self.llm.invoke(
@@ -182,18 +298,37 @@ class Archon(ArchonInterface):
             summary = response.content
         except Exception as e:
             summary = f"Archon Error: {str(e)}"
-            logger.error(summary)
+            logger.error(summary, exc_info=True)
         
-        # Update the World State (Ground Truth)
-        state["world_state"].environment.global_events.append(summary)
+        # Update World State (create new list to avoid mutation issues)
+        new_events = list(current_state.environment.global_events) + [summary]
+        state["world_state"].environment.global_events = new_events
         state["archon_summary"] = summary
+        
+        # Store in Memory Stream for traceability
+        if self.memory_stream:
+            self.memory_stream.add_adjudication(
+                content=summary,
+                cycle=current_state.environment.cycle,
+                metadata={
+                    "intents": state["actor_intents"],
+                    "feasibility_reports": {
+                        k: v.to_dict() for k, v in state["feasibility_reports"].items()
+                    },
+                    "errors": state.get("actor_errors", {})
+                }
+            )
         
         # Store rationale for traceability
         rationale = {
             "cycle": current_state.environment.cycle,
             "intents": state["actor_intents"],
+            "feasibility_reports": {
+                k: v.to_dict() for k, v in state["feasibility_reports"].items()
+            },
+            "errors": state.get("actor_errors", {}),
             "summary": summary,
-            "reasoning": "LLM-based adjudication"
+            "timestamp": datetime.now().isoformat()
         }
         state["rationales"] = state.get("rationales", []) + [rationale]
         
@@ -201,30 +336,31 @@ class Archon(ArchonInterface):
     
     def run_cycle(self, world_state: WorldState) -> Dict[str, Any]:
         """
-        Run a full perception-adjudication cycle.
+        Run the full graph cycle.
         
         Args:
             world_state: Current world state
         
         Returns:
-            Dict with updated world_state and archon_summary
+            Dict with updated world_state, archon_summary, and rationales
         """
-        brain_input = {
+        brain_input: AgentState = {
             "world_state": world_state, 
-            "actor_intents": [], 
+            "actor_intents": {}, 
+            "actor_errors": {},
+            "feasibility_reports": {},
             "archon_summary": "",
             "rationales": []
         }
         
-        # Execute the graph
         final_output = self._compiled_graph.invoke(brain_input)
         
         return {
             "world_state": final_output["world_state"],
-            "archon_summary": final_output.get("archon_summary", "No summary provided"),
+            "archon_summary": final_output.get("archon_summary", ""),
             "rationales": final_output.get("rationales", [])
         }
-    
+
     # ArchonInterface implementation
     
     def adjudicate(
@@ -235,9 +371,13 @@ class Archon(ArchonInterface):
         """
         Adjudicate actor intents and return the result.
         
+        Note: This interface method accepts pre-generated intents, but
+        the internal implementation generates intents via agents.
+        For now, we ignore the provided intents and use agent generation.
+        
         Args:
             world_state: Current world state
-            actor_intents: List of actor intent strings
+            actor_intents: List of actor intent strings (ignored - agents generate their own)
         
         Returns:
             AdjudicationResult with updated state and rationale
@@ -255,25 +395,21 @@ class Archon(ArchonInterface):
         self, 
         intent: str, 
         world_state: WorldState
-    ) -> Dict[str, Any]:
+    ) -> FeasibilityReport:
         """
         Check if an intent is feasible given the world state.
-        
-        This is a placeholder that will be enhanced with the FeasibilityEngine.
         
         Args:
             intent: The intent to check
             world_state: Current world state
         
         Returns:
-            Dict with feasibility assessment
+            FeasibilityReport with assessment details
         """
-        # Placeholder - will be implemented with FeasibilityEngine
-        return {
-            "feasible": True,
-            "constraints_checked": [],
-            "violations": []
-        }
+        return self.feasibility_engine.check_feasibility(
+            intent=intent,
+            world_state=world_state
+        )
     
     def generate_rationale(self, result: AdjudicationResult) -> str:
         """
@@ -286,20 +422,12 @@ class Archon(ArchonInterface):
             Human-readable rationale string
         """
         return result.summary
-
-
-# Create a compiled simulation brain for backward compatibility
-def create_simulation_brain(archon: Optional[Archon] = None) -> Any:
-    """
-    Create a simulation brain (compiled LangGraph).
     
-    Args:
-        archon: Optional Archon instance (creates new one if not provided)
-    
-    Returns:
-        Compiled LangGraph workflow
-    """
-    if archon is None:
-        archon = Archon()
-    return archon._compiled_graph
-
+    def clear_agent_cache(self) -> None:
+        """
+        Clear the agent cache.
+        
+        Useful for resetting agent state or when actors are removed.
+        """
+        self._agent_cache.clear()
+        logger.info("Agent cache cleared")

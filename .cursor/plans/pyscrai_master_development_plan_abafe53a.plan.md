@@ -604,7 +604,3 @@ sample_choice(prompt, responses) → LLM scoring/selection
 - [ ] LLM abstraction layer implemented and tested
 - [ ] ChromaDB memory adapter functional
 - [ ] Actors can retrieve memories during perception
-- [ ] Macro and Micro agents can coexist
-- [ ] .WORLD file system operational
-- [ ] API remains backward compatible
-- [ ] All existing functionality preserved
