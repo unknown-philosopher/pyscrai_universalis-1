@@ -1,16 +1,24 @@
 """
 Feasibility Engine - Constraint checking for PyScrAI Universalis.
 
-This module provides mathematical constraint checking to determine
-if an intent is feasible given the current world state.
+This module provides constraint checking to determine if an intent is 
+feasible given the current world state. Uses DuckDB spatial queries
+for geographic constraints.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable
 from enum import Enum
 
-from pyscrai.data.schemas.models import WorldState, Actor, Asset
+from pyscrai.data.schemas.models import WorldState, Actor, Asset, Location
 from pyscrai.universalis.archon.interface import FeasibilityReport
+from pyscrai.universalis.archon.spatial_constraints import (
+    SpatialConstraintChecker,
+    SpatialConstraintResult,
+    SpatialConstraintType
+)
+from pyscrai.universalis.state.duckdb_manager import get_state_manager
 from pyscrai.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,6 +32,7 @@ class ConstraintType(str, Enum):
     TEMPORAL = "temporal"
     RESOURCE = "resource"
     POLICY = "policy"
+    SPATIAL = "spatial"
 
 
 @dataclass
@@ -40,13 +49,30 @@ class FeasibilityEngine:
     Engine for checking feasibility of intents.
     
     Validates whether an intent can be executed within the constraints
-    of the simulation (budget, logistics, physical laws, etc.).
+    of the simulation (budget, logistics, physical laws, spatial constraints).
+    Uses DuckDB spatial queries for geographic validation.
     """
     
-    def __init__(self):
-        """Initialize the feasibility engine with default constraints."""
+    def __init__(self, simulation_id: Optional[str] = None):
+        """
+        Initialize the feasibility engine with default constraints.
+        
+        Args:
+            simulation_id: Optional simulation ID for spatial queries
+        """
         self._constraints: List[Constraint] = []
+        self._spatial_checker: Optional[SpatialConstraintChecker] = None
+        self._simulation_id = simulation_id
+        
         self._register_default_constraints()
+    
+    def _get_spatial_checker(self) -> SpatialConstraintChecker:
+        """Get or create the spatial constraint checker."""
+        if self._spatial_checker is None:
+            self._spatial_checker = SpatialConstraintChecker(
+                simulation_id=self._simulation_id
+            )
+        return self._spatial_checker
     
     def _register_default_constraints(self) -> None:
         """Register the default set of constraints."""
@@ -72,6 +98,14 @@ class FeasibilityEngine:
             constraint_type=ConstraintType.POLICY,
             check_fn=self._check_actor_authorization,
             error_message="Actor is not authorized to perform this action"
+        ))
+        
+        # Spatial movement constraint
+        self._constraints.append(Constraint(
+            name="spatial_movement",
+            constraint_type=ConstraintType.SPATIAL,
+            check_fn=self._check_spatial_movement,
+            error_message="Movement blocked by terrain or distance"
         ))
     
     def register_constraint(self, constraint: Constraint) -> None:
@@ -196,6 +230,56 @@ class FeasibilityEngine:
         
         return True
     
+    def _check_spatial_movement(
+        self,
+        intent: str,
+        world_state: WorldState
+    ) -> bool:
+        """
+        Check if spatial movement in the intent is feasible.
+        
+        Parses intent for movement-related keywords and validates:
+        - Target location is passable terrain
+        - Path to target is not blocked
+        """
+        # Check for movement keywords
+        movement_keywords = ['move', 'go', 'travel', 'deploy', 'relocate', 'dispatch', 'send']
+        has_movement = any(kw in intent.lower() for kw in movement_keywords)
+        
+        if not has_movement:
+            return True  # No movement to validate
+        
+        # Try to extract coordinates from intent
+        # Pattern: lat/lon pairs like "34.05, -118.25" or "to (34.05, -118.25)"
+        coord_pattern = r'[-]?\d+\.?\d*[,\s]+[-]?\d+\.?\d*'
+        matches = re.findall(coord_pattern, intent)
+        
+        if not matches:
+            return True  # No coordinates to validate
+        
+        try:
+            spatial_checker = self._get_spatial_checker()
+            
+            for match in matches:
+                parts = re.split(r'[,\s]+', match.strip())
+                if len(parts) >= 2:
+                    try:
+                        lat = float(parts[0])
+                        lon = float(parts[1])
+                        
+                        # Check terrain passability
+                        result = spatial_checker.check_terrain_passability(lon, lat)
+                        if not result.passed:
+                            logger.warning(f"Spatial constraint failed: {result.message}")
+                            return False
+                    except ValueError:
+                        continue
+            
+            return True
+        except Exception as e:
+            logger.warning(f"Spatial constraint check error: {e}")
+            return True  # Default to allowing if spatial check fails
+    
     def _generate_recommendation(
         self, 
         violation: Dict[str, Any], 
@@ -223,8 +307,117 @@ class FeasibilityEngine:
             return "Review budget allocation or reduce scope of operation"
         elif constraint_type == ConstraintType.LOGISTICS.value:
             return "Consider alternative routes or staging areas"
+        elif constraint_type == ConstraintType.SPATIAL.value:
+            return "Choose a different route or destination to avoid impassable terrain"
         
         return None
+    
+    # =========================================================================
+    # SPATIAL CONSTRAINT METHODS (DuckDB-backed)
+    # =========================================================================
+    
+    def check_movement_feasibility(
+        self,
+        entity_id: str,
+        target_lon: float,
+        target_lat: float,
+        max_distance_degrees: Optional[float] = None
+    ) -> FeasibilityReport:
+        """
+        Check if an entity can move to a target location using spatial queries.
+        
+        Args:
+            entity_id: Entity to move
+            target_lon, target_lat: Target coordinates
+            max_distance_degrees: Maximum movement distance
+        
+        Returns:
+            FeasibilityReport with spatial constraint results
+        """
+        spatial_checker = self._get_spatial_checker()
+        
+        passed, results = spatial_checker.validate_movement(
+            entity_id=entity_id,
+            target_lon=target_lon,
+            target_lat=target_lat,
+            max_distance_degrees=max_distance_degrees
+        )
+        
+        violations = []
+        for result in results:
+            if not result.passed:
+                violations.append({
+                    "constraint": result.constraint_type.value,
+                    "type": ConstraintType.SPATIAL.value,
+                    "message": result.message,
+                    "details": result.details
+                })
+        
+        recommendations = []
+        if not passed:
+            recommendations.append("Consider alternative routes or closer destinations")
+        
+        return FeasibilityReport(
+            feasible=passed,
+            intent=f"Move {entity_id} to ({target_lon}, {target_lat})",
+            constraints_checked=[r.constraint_type.value for r in results],
+            violations=violations,
+            recommendations=recommendations
+        )
+    
+    def check_distance_constraint(
+        self,
+        entity1_id: str,
+        entity2_id: str,
+        max_distance_degrees: float
+    ) -> bool:
+        """
+        Check if two entities are within maximum distance using spatial SQL.
+        
+        Args:
+            entity1_id: First entity ID
+            entity2_id: Second entity ID
+            max_distance_degrees: Maximum allowed distance
+        
+        Returns:
+            True if within distance, False otherwise
+        """
+        spatial_checker = self._get_spatial_checker()
+        result = spatial_checker.check_distance_constraint(
+            entity1_id, entity2_id, max_distance_degrees
+        )
+        return result.passed
+    
+    def check_path_feasibility(
+        self,
+        start_lon: float,
+        start_lat: float,
+        end_lon: float,
+        end_lat: float
+    ) -> tuple:
+        """
+        Check if a path between two points is feasible.
+        
+        Args:
+            start_lon, start_lat: Starting coordinates
+            end_lon, end_lat: Ending coordinates
+        
+        Returns:
+            Tuple of (is_feasible, movement_cost, blocker_name)
+        """
+        spatial_checker = self._get_spatial_checker()
+        result = spatial_checker.check_path_constraint(
+            start_lon, start_lat, end_lon, end_lat
+        )
+        
+        if result.passed:
+            return True, result.details.get('movement_cost', 1.0), None
+        else:
+            return False, float('inf'), result.details.get('blocker')
+    
+    # =========================================================================
+    # LEGACY UTILITY METHODS (kept for backward compatibility)
+    # =========================================================================
     
     def check_budget_constraint(
         self, 
@@ -243,32 +436,6 @@ class FeasibilityEngine:
         """
         return cost <= available_budget
     
-    def check_distance_constraint(
-        self, 
-        origin: Dict[str, float], 
-        destination: Dict[str, float], 
-        max_distance: float
-    ) -> bool:
-        """
-        Utility method to check distance constraints.
-        
-        Args:
-            origin: Origin location {"lat": float, "lon": float}
-            destination: Destination location {"lat": float, "lon": float}
-            max_distance: Maximum allowed distance
-        
-        Returns:
-            True if within distance, False otherwise
-        """
-        # Simple Euclidean distance (for more accuracy, use Haversine)
-        import math
-        
-        lat_diff = origin.get("lat", 0) - destination.get("lat", 0)
-        lon_diff = origin.get("lon", 0) - destination.get("lon", 0)
-        distance = math.sqrt(lat_diff**2 + lon_diff**2)
-        
-        return distance <= max_distance
-    
     def check_time_constraint(
         self, 
         required_time: float, 
@@ -285,4 +452,3 @@ class FeasibilityEngine:
             True if within time, False otherwise
         """
         return required_time <= available_time
-

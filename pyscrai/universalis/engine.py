@@ -1,56 +1,49 @@
 """
-Simulation Engine - The Heartbeat of PyScrAI Universalis.
+Simulation Engine - The Heartbeat of PyScrAI Universalis (GeoScrAI).
 
-This module contains the Mesa-based simulation engine that manages
-the temporal pulse of the simulation.
+This module contains the async simulation engine that manages
+the temporal pulse of the simulation using DuckDB for state storage.
 """
 
-import mesa
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from pymongo import MongoClient
-from pymongo.database import Database
-from pymongo.collection import Collection
-import os
-from dotenv import load_dotenv
 
 from pyscrai.data.schemas.models import WorldState, Environment
-from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.universalis.state.duckdb_manager import DuckDBStateManager, get_state_manager
 from pyscrai.universalis.memory.stream import MemoryStream
 from pyscrai.config import get_config
 from pyscrai.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from pyscrai.universalis.archon.adjudicator import Archon
-
-# Load environment variables
-load_dotenv()
+    from pyscrai.universalis.memory.associative import LanceDBMemoryBank
 
 logger = get_logger(__name__)
 
 
-class SimulationEngine(mesa.Model):
+class SimulationEngine:
     """
     The Master Simulation Engine.
     
-    Manages the simulation clock using Mesa and coordinates the
-    Perception → Action → Adjudication workflow.
+    Manages the simulation clock and coordinates the
+    Perception → Action → Adjudication workflow using async operations.
     
     Attributes:
         sim_id: Unique identifier for this simulation
         steps: Current cycle number
-        db: MongoDB database connection
-        states_collection: MongoDB collection for world states
+        state_manager: DuckDB state manager
         archon: Optional Archon instance for adjudication
-        memory_bank: ChromaDB-backed associative memory
+        memory_bank: LanceDB-backed associative memory
         memory_stream: Chronological event log
+        running: Whether the simulation is currently running
+        paused: Whether the simulation is paused (for God Mode)
     """
     
     def __init__(
         self, 
         sim_id: str,
-        mongo_uri: Optional[str] = None,
-        db_name: Optional[str] = None,
+        db_path: Optional[str] = None,
         archon: Optional["Archon"] = None
     ):
         """
@@ -58,28 +51,19 @@ class SimulationEngine(mesa.Model):
         
         Args:
             sim_id: Unique identifier for this simulation
-            mongo_uri: MongoDB connection URI (defaults to env var)
-            db_name: Database name (defaults to env var)
+            db_path: Optional path to DuckDB database
             archon: Optional Archon instance for adjudication
         """
-        super().__init__()
         self.sim_id = sim_id
         self.config = get_config()
         
-        # --- 1. Persistence Layer (MongoDB) ---
-        self._mongo_uri = mongo_uri or self.config.database.uri
-        self._db_name = db_name or self.config.database.db_name
+        # --- 1. Persistence Layer (DuckDB) ---
+        self.state_manager = DuckDBStateManager(
+            db_path=db_path,
+            simulation_id=sim_id
+        )
         
-        try:
-            self._client: MongoClient = MongoClient(self._mongo_uri)
-            self.db: Database = self._client[self._db_name]
-            self.states_collection: Collection = self.db["world_states"]
-        except Exception as e:
-            logger.error(f"Failed to connect to MongoDB: {e}")
-            raise RuntimeError(f"Cannot initialize engine without MongoDB: {e}")
-        
-        # --- 2. Memory Layer (ChromaDB + Stream) ---
-        # Initialize these ONCE here so they persist across ticks
+        # --- 2. Memory Layer (LanceDB + Stream) ---
         logger.info(f"Initializing Memory Systems for {sim_id}...")
         try:
             self._init_memory_systems()
@@ -93,89 +77,39 @@ class SimulationEngine(mesa.Model):
             self._inject_memory_into_archon()
 
         # Sync cycle count from DB if restarting, else 0
-        latest = self.states_collection.find_one(
-            {"simulation_id": sim_id}, 
-            sort=[("environment.cycle", -1)]
-        )
-        self.steps = latest["environment"]["cycle"] if latest else 0
+        self.steps = self.state_manager.get_current_cycle()
+        
+        # --- 4. Control Flags ---
+        self.running = False
+        self.paused = False
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Not paused initially
+        
         logger.info(f"Engine {self.sim_id} Initialized at Cycle {self.steps}")
     
     def _init_memory_systems(self) -> None:
         """
-        Initialize memory systems with embedding function.
-        
-        Tries HTTP client first, falls back to persistent client if HTTP fails.
+        Initialize memory systems with LanceDB.
         
         Raises:
             RuntimeError: If memory initialization fails
         """
-        from pyscrai.universalis.memory.embeddings import get_embedding_function
+        # Import here to avoid circular imports
+        from pyscrai.universalis.memory.lancedb_memory import LanceDBMemoryBank
         
-        embedding_fn = None
         try:
-            embedding_fn = get_embedding_function()
-        except ImportError as e:
-            logger.warning(f"Failed to import embedding function: {e}")
-            logger.warning("Will use ChromaDB default embeddings")
-        
-        # Try HTTP client first (if configured)
-        if self.config.chromadb.use_http:
-            try:
-                logger.info(
-                    f"Attempting to connect to ChromaDB at "
-                    f"{self.config.chromadb.host}:{self.config.chromadb.port}"
-                )
-                self.memory_bank = ChromaDBMemoryBank(
-                    collection_name=self.config.chromadb.collection_name,
-                    simulation_id=self.sim_id,
-                    chroma_host=self.config.chromadb.host,
-                    chroma_port=self.config.chromadb.port,
-                    embedding_function=embedding_fn
-                )
-                logger.info("✅ Connected to ChromaDB via HTTP client")
-            except Exception as e:
-                logger.warning(f"HTTP client failed: {e}")
-                logger.info("Falling back to persistent client...")
-                # Fall through to persistent client
-                self._init_persistent_memory(embedding_fn)
-        else:
-            # Use persistent client directly
-            self._init_persistent_memory(embedding_fn)
+            self.memory_bank = LanceDBMemoryBank(
+                simulation_id=self.sim_id
+            )
+            logger.info("✅ LanceDB Memory Bank initialized")
+        except Exception as e:
+            logger.warning(f"LanceDB initialization failed: {e}")
+            # Fallback to in-memory if needed
+            raise
         
         # Initialize memory stream (always succeeds)
         self.memory_stream = MemoryStream(simulation_id=self.sim_id)
         logger.info("Memory systems initialized successfully")
-    
-    def _init_persistent_memory(self, embedding_fn=None) -> None:
-        """
-        Initialize ChromaDB using persistent client (local storage).
-        
-        Args:
-            embedding_fn: Optional embedding function
-        """
-        import tempfile
-        from pathlib import Path
-        
-        # Determine persist directory
-        if self.config.chromadb.persist_directory:
-            persist_dir = Path(self.config.chromadb.persist_directory)
-        else:
-            # Use temp directory for this simulation
-            base_dir = Path(__file__).parent.parent.parent / "database" / "chroma-data"
-            base_dir.mkdir(parents=True, exist_ok=True)
-            persist_dir = base_dir / self.sim_id
-        
-        persist_dir.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Using persistent ChromaDB at: {persist_dir}")
-        
-        self.memory_bank = ChromaDBMemoryBank(
-            collection_name=self.config.chromadb.collection_name,
-            simulation_id=self.sim_id,
-            persist_directory=str(persist_dir),
-            embedding_function=embedding_fn
-        )
-        logger.info("✅ Initialized ChromaDB with persistent client")
     
     def _inject_memory_into_archon(self) -> None:
         """
@@ -193,25 +127,16 @@ class SimulationEngine(mesa.Model):
     
     def get_current_state(self) -> Optional[WorldState]:
         """
-        Fetch the latest world state from MongoDB.
+        Fetch the latest world state from DuckDB.
         
         Returns:
             WorldState if found, None otherwise
         """
-        latest_doc = self.states_collection.find_one(
-            {"simulation_id": self.sim_id},
-            sort=[("environment.cycle", -1)]
-        )
-        
-        if latest_doc:
-            # Remove MongoDB internal ID before rehydrating
-            latest_doc.pop("_id", None)
-            return WorldState(**latest_doc)
-        return None
+        return self.state_manager.get_world_state()
     
     def save_adjudicated_state(self, world_state: WorldState) -> None:
         """
-        Serializes the final adjudicated state and pushes to MongoDB.
+        Serializes the final adjudicated state and saves to DuckDB.
         
         Args:
             world_state: The adjudicated world state to persist
@@ -219,17 +144,30 @@ class SimulationEngine(mesa.Model):
         # Ensure the timestamp is current before saving
         world_state.last_updated = datetime.now()
         
-        # Convert Pydantic model to dict for MongoDB
-        self.states_collection.insert_one(world_state.model_dump())
-        logger.info(f"Cycle {world_state.environment.cycle} adjudicated and saved to MongoDB.")
+        self.state_manager.save_world_state(world_state)
+        logger.info(f"Cycle {world_state.environment.cycle} adjudicated and saved to DuckDB.")
     
     def step(self) -> Dict[str, Any]:
         """
-        The Master Tick.
+        The Master Tick (synchronous version).
         
-        1. Advances the temporal pulse (Mesa)
+        1. Advances the temporal pulse
         2. Triggers the cognitive bridge (Archon/LangGraph)
-        3. Persists the ground truth (MongoDB)
+        3. Persists the ground truth (DuckDB)
+        
+        Returns:
+            Dict with cycle number, status, and summary
+        """
+        return asyncio.get_event_loop().run_until_complete(self.async_step())
+    
+    async def async_step(self) -> Dict[str, Any]:
+        """
+        The Master Tick (async version with interrupt support).
+        
+        1. Waits for unpause if paused (God Mode support)
+        2. Advances the temporal pulse
+        3. Triggers the cognitive bridge (Archon/LangGraph)
+        4. Persists the ground truth (DuckDB)
         
         Returns:
             Dict with cycle number, status, and summary
@@ -238,7 +176,10 @@ class SimulationEngine(mesa.Model):
             Exception: If adjudication fails, exception is logged but result dict is still returned
         """
         try:
-            # 1. Advance Mesa internal step counter
+            # Wait for unpause if paused
+            await self._pause_event.wait()
+            
+            # 1. Advance step counter
             self.steps += 1 
             
             # 2. Fetch the previous state to act as the baseline
@@ -280,7 +221,7 @@ class SimulationEngine(mesa.Model):
                 logger.warning("No Archon attached - passing world state through unchanged")
                 archon_summary = "No adjudication (Archon not attached)"
             
-            # 4. Save the adjudicated result to the Ledger (MongoDB)
+            # 4. Save the adjudicated result to DuckDB
             try:
                 self.save_adjudicated_state(final_world_state)
             except Exception as e:
@@ -301,6 +242,49 @@ class SimulationEngine(mesa.Model):
                 "summary": f"Step failed: {str(e)}"
             }
     
+    async def run_loop(self, tick_interval_ms: Optional[int] = None) -> None:
+        """
+        Run the simulation loop continuously.
+        
+        Args:
+            tick_interval_ms: Milliseconds between ticks (defaults to config)
+        """
+        interval = (tick_interval_ms or self.config.simulation.tick_interval_ms) / 1000.0
+        self.running = True
+        
+        logger.info(f"Starting simulation loop with {interval}s interval")
+        
+        try:
+            while self.running:
+                result = await self.async_step()
+                logger.info(f"Cycle {result['cycle']}: {result['status']}")
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            logger.info("Simulation loop cancelled")
+        finally:
+            self.running = False
+    
+    def stop(self) -> None:
+        """Stop the simulation loop."""
+        self.running = False
+        logger.info("Simulation stop requested")
+    
+    def pause(self) -> None:
+        """
+        Pause the simulation (God Mode).
+        
+        The simulation will complete the current cycle and then wait.
+        """
+        self.paused = True
+        self._pause_event.clear()
+        logger.info("Simulation paused (God Mode active)")
+    
+    def resume(self) -> None:
+        """Resume a paused simulation."""
+        self.paused = False
+        self._pause_event.set()
+        logger.info("Simulation resumed")
+    
     def attach_archon(self, archon: "Archon") -> None:
         """
         Attach an Archon instance and inject memory systems.
@@ -318,6 +302,7 @@ class SimulationEngine(mesa.Model):
     def reset(self) -> None:
         """Reset the simulation to cycle 0."""
         self.steps = 0
+        self.state_manager.clear_simulation()
         logger.info(f"Engine {self.sim_id} reset to Cycle 0")
     
     def shutdown(self) -> None:
@@ -326,8 +311,67 @@ class SimulationEngine(mesa.Model):
         
         Closes database connections and performs cleanup.
         """
-        if hasattr(self, '_client'):
-            self._client.close()
-            logger.info("MongoDB connection closed")
-        # ChromaDB client cleanup handled automatically
+        self.stop()
+        self.state_manager.close()
         logger.info(f"Engine {self.sim_id} shutdown complete")
+    
+    # =========================================================================
+    # SPATIAL QUERY HELPERS
+    # =========================================================================
+    
+    def get_entities_near(
+        self,
+        lon: float,
+        lat: float,
+        radius_degrees: Optional[float] = None,
+        entity_type: Optional[str] = None
+    ) -> list:
+        """
+        Get entities near a location (perception sphere).
+        
+        Args:
+            lon: Center longitude
+            lat: Center latitude
+            radius_degrees: Search radius (defaults to config)
+            entity_type: Filter by type ('actor', 'asset', etc.)
+        
+        Returns:
+            List of nearby entity dictionaries
+        """
+        radius = radius_degrees or self.config.simulation.perception_radius_degrees
+        return self.state_manager.get_entities_within_distance(
+            center_lon=lon,
+            center_lat=lat,
+            distance_degrees=radius,
+            entity_type=entity_type
+        )
+    
+    def check_movement_feasible(
+        self,
+        start_lon: float,
+        start_lat: float,
+        end_lon: float,
+        end_lat: float
+    ) -> tuple:
+        """
+        Check if movement between two points is feasible.
+        
+        Args:
+            start_lon, start_lat: Starting coordinates
+            end_lon, end_lat: Destination coordinates
+        
+        Returns:
+            Tuple of (is_feasible, reason, cost)
+        """
+        is_blocked, blocker = self.state_manager.check_path_blocked(
+            start_lon, start_lat, end_lon, end_lat
+        )
+        
+        if is_blocked:
+            return False, f"Path blocked by {blocker}", float('inf')
+        
+        cost = self.state_manager.calculate_path_cost(
+            start_lon, start_lat, end_lon, end_lat
+        )
+        
+        return True, "Path clear", cost

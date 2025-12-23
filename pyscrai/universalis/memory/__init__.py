@@ -2,14 +2,21 @@
 Memory module - Cognitive backbone for PyScrAI agents.
 
 This module manages a hybrid memory architecture:
-- associative: ChromaDB-backed associative memory with semantic retrieval
+- lancedb_memory: LanceDB-backed associative memory with Arrow integration
+- associative: ChromaDB-backed associative memory (legacy/fallback)
 - scopes: Memory scoping (PUBLIC, PRIVATE, SHARED_GROUP)
 - pruning: Memory consolidation and relevance decay
 - stream: Chronological event log for traceability
 - embeddings: Sentence transformer integration
 """
 
+# Primary memory system (LanceDB)
+from pyscrai.universalis.memory.lancedb_memory import LanceDBMemoryBank
+
+# Legacy memory system (ChromaDB - for backward compatibility)
 from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+
+# Scopes
 from pyscrai.universalis.memory.scopes import (
     MemoryScope,
     MemoryMetadata,
@@ -18,11 +25,15 @@ from pyscrai.universalis.memory.scopes import (
     create_private_memory_metadata,
     create_shared_memory_metadata
 )
+
+# Stream
 from pyscrai.universalis.memory.stream import (
     MemoryStream,
     StreamEvent,
     EventType
 )
+
+# Pruning
 from pyscrai.universalis.memory.pruning import (
     MemoryPruner,
     PruningConfig,
@@ -32,7 +43,9 @@ from pyscrai.universalis.memory.pruning import (
 )
 
 __all__ = [
-    # Associative memory
+    # Primary memory (LanceDB)
+    "LanceDBMemoryBank",
+    # Legacy memory (ChromaDB)
     "ChromaDBMemoryBank",
     # Scopes
     "MemoryScope",

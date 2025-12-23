@@ -1,15 +1,41 @@
-langchain
-langchain-openai
-langgraph
-mesa
-pydantic
-pydantic-ai
-fastapi
-uvicorn
-litellm
-python-dotenv
-pymongo
-chromadb
-flet
-flet-map
-langfuse 
+# GeoScrAI / PyScrAI Universalis Dependencies
+# Data-Driven Monolith Architecture
+
+# =============================================================================
+# CORE: Data Storage & Spatial Queries
+# =============================================================================
+duckdb>=1.0.0                  # OLAP SQL engine with spatial extension
+lancedb>=0.4.0                 # Native vector database with Arrow integration
+pyarrow>=14.0.0                # Apache Arrow for zero-copy data exchange
+
+# =============================================================================
+# LLM & AI
+# =============================================================================
+langchain>=0.1.0               # LLM orchestration framework
+langchain-openai>=0.0.5        # OpenAI/OpenRouter integration
+langgraph>=0.0.30              # Graph-based LLM workflows
+sentence-transformers>=2.2.0   # Local embeddings for LanceDB
+
+# =============================================================================
+# WEB UI (NiceGUI-based)
+# =============================================================================
+nicegui>=1.4.0                 # Unified event loop UI framework
+leaflet                        # Map components (via nicegui)
+
+# =============================================================================
+# DATA VALIDATION & UTILITIES
+# =============================================================================
+pydantic>=2.0.0                # Data validation and settings management
+python-dotenv>=1.0.0           # Environment variable management
+
+# =============================================================================
+# OBSERVABILITY
+# =============================================================================
+langfuse>=2.0.0                # LLM observability and tracing
+
+# =============================================================================
+# OPTIONAL: Development
+# =============================================================================
+pytest>=7.0.0                  # Testing framework
+pytest-asyncio>=0.21.0         # Async test support
+httpx>=0.25.0                  # Async HTTP client for testing

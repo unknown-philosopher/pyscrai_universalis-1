@@ -3,7 +3,8 @@ Architect module - Design Time tools for PyScrAI Universalis.
 
 This module contains tools for creating Worlds and Scenarios:
 - builder: Compile raw data into .WORLD format
-- seeder: Initialize database with scenario data
+- seeder: Initialize DuckDB database with scenario data
+- schema_init: Initialize database schema
 - validator: Multi-level validation (schema, type, historical/contextual)
 - pipeline: Seed-to-state compilation
 - context_validator: Historical/contextual validation rules
@@ -12,7 +13,15 @@ This module contains tools for creating Worlds and Scenarios:
 from pyscrai.architect.seeder import (
     seed_simulation,
     seed_custom_scenario,
-    get_mongo_collection
+    seed_from_file,
+    get_seeded_simulations
+)
+from pyscrai.architect.schema_init import (
+    init_database,
+    load_spatial_extension,
+    apply_schema,
+    create_spatial_indexes,
+    verify_schema
 )
 from pyscrai.architect.validator import (
     WorldValidator,
@@ -46,7 +55,14 @@ __all__ = [
     # Seeder
     "seed_simulation",
     "seed_custom_scenario",
-    "get_mongo_collection",
+    "seed_from_file",
+    "get_seeded_simulations",
+    # Schema Init
+    "init_database",
+    "load_spatial_extension",
+    "apply_schema",
+    "create_spatial_indexes",
+    "verify_schema",
     # Validator
     "WorldValidator",
     "SchemaValidator",

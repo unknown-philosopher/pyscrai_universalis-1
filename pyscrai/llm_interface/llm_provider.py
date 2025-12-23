@@ -14,7 +14,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langfuse.langchain import CallbackHandler
 
-from pyscrai.universalis.agents.llm_controller import (
+from pyscrai.llm_interface import (
     LanguageModel,
     InvalidResponseError,
     DEFAULT_TEMPERATURE,
