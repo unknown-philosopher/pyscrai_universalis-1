@@ -12,7 +12,7 @@ from enum import Enum
 from pyscrai.data.schemas.models import Actor, WorldState, ResolutionType
 from pyscrai.universalis.agents.llm_controller import LanguageModel, LLMController
 from pyscrai.universalis.agents.llm_provider import LangChainOpenRouterModel
-from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.universalis.memory.interface import MemoryBank
 from pyscrai.universalis.memory.scopes import (
     MemoryScope, 
     ScopeFilter,
@@ -87,7 +87,7 @@ class MicroAgent:
         self,
         actor: Actor,
         llm: Optional[LanguageModel] = None,
-        memory_bank: Optional[ChromaDBMemoryBank] = None,
+        memory_bank: Optional[MemoryBank] = None,
         memory_stream: Optional[MemoryStream] = None,
         config: Optional[MicroAgentConfig] = None
     ):
@@ -426,7 +426,7 @@ Be natural and in-character. What would YOU do?"""
 
 def create_micro_agent(
     actor: Actor,
-    memory_bank: Optional[ChromaDBMemoryBank] = None,
+    memory_bank: Optional[MemoryBank] = None,
     memory_stream: Optional[MemoryStream] = None,
     **kwargs
 ) -> MicroAgent:

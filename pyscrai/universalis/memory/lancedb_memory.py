@@ -20,6 +20,7 @@ from pyscrai.universalis.memory.scopes import (
     MemoryMetadata,
     ScopeFilter,
 )
+from pyscrai.universalis.memory.interface import MemoryBank
 from pyscrai.config import get_config
 from pyscrai.utils.logger import get_logger
 
@@ -35,7 +36,7 @@ except ImportError:
     logger.warning("LanceDB not available. Install with: pip install lancedb")
 
 
-class LanceDBMemoryBank:
+class LanceDBMemoryBank(MemoryBank):
     """
     LanceDB-backed associative memory implementing Concordia interface.
     
@@ -270,7 +271,7 @@ class LanceDBMemoryBank:
             
             # Apply scope filter if provided
             if scope_filter:
-                filter_expr = self._build_lance_filter(scope_filter)
+                filter_expr = scope_filter.build_lancedb_filter()
                 if filter_expr:
                     search = search.where(filter_expr)
             
@@ -281,30 +282,21 @@ class LanceDBMemoryBank:
             return [r['text'] for r in results[:k]]
     
     def _build_lance_filter(self, scope_filter: ScopeFilter) -> Optional[str]:
-        """Build a LanceDB filter expression from ScopeFilter."""
+        """
+        Build a LanceDB filter expression from ScopeFilter.
+        
+        DEPRECATED: Use scope_filter.build_lancedb_filter() instead.
+        This method is kept for backward compatibility but adds simulation_id filtering.
+        """
         conditions = []
         
         # Always filter by simulation
         conditions.append(f"simulation_id = '{self._simulation_id}'")
         
-        if scope_filter.requesting_agent_id:
-            agent_id = scope_filter.requesting_agent_id
-            # Can see: PUBLIC, own PRIVATE, or SHARED_GROUP if in same group
-            if scope_filter.agent_groups:
-                groups = "', '".join(scope_filter.agent_groups)
-                conditions.append(
-                    f"(scope = 'PUBLIC' OR "
-                    f"(scope = 'PRIVATE' AND owner_id = '{agent_id}') OR "
-                    f"(scope = 'SHARED_GROUP' AND group_id IN ('{groups}')))"
-                )
-            else:
-                conditions.append(
-                    f"(scope = 'PUBLIC' OR "
-                    f"(scope = 'PRIVATE' AND owner_id = '{agent_id}'))"
-                )
-        else:
-            # No agent specified - only public
-            conditions.append("scope = 'PUBLIC'")
+        # Use the ScopeFilter's build method
+        scope_condition = scope_filter.build_lancedb_filter()
+        if scope_condition:
+            conditions.append(scope_condition)
         
         return " AND ".join(conditions) if conditions else None
     

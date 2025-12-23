@@ -52,6 +52,9 @@ class SimulationUI:
         self.events_container = None
         self.actors_container = None
         self.assets_container = None
+        
+        # Map marker tracking
+        self._markers = []
     
     def build(self) -> None:
         """Build the main UI layout."""
@@ -338,22 +341,29 @@ class SimulationUI:
         if not self.map_component:
             return
         
-        # Clear existing markers (simplified - in real app, track and update)
-        # For now, we'll just add markers
+        # Clear existing markers
+        for marker in self._markers:
+            try:
+                marker.delete()
+            except Exception:
+                pass  # Marker may already be deleted
+        self._markers.clear()
         
         # Add actor markers
         for actor_id, actor in world_state.actors.items():
             if actor.location:
-                self.map_component.marker(
+                marker = self.map_component.marker(
                     latlng=(actor.location.lat, actor.location.lon)
                 )
+                self._markers.append(marker)
         
         # Add asset markers
         for asset_id, asset in world_state.assets.items():
             if asset.location and 'lat' in asset.location and 'lon' in asset.location:
-                self.map_component.marker(
+                marker = self.map_component.marker(
                     latlng=(asset.location['lat'], asset.location['lon'])
                 )
+                self._markers.append(marker)
     
     def _add_event(self, event: str) -> None:
         """Add an event to the log."""

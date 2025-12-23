@@ -7,7 +7,7 @@ while allowing appropriate sharing of public information.
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Union
 
 
 class MemoryScope(str, Enum):
@@ -162,6 +162,42 @@ class ScopeFilter:
             return conditions[0]
         
         return {"$or": conditions}
+    
+    def build_lancedb_filter(self) -> Optional[str]:
+        """
+        Build a LanceDB filter expression for scoped retrieval.
+        
+        Returns:
+            SQL filter string for LanceDB queries, or None if no filter needed
+        """
+        conditions = []
+        
+        # Public scope
+        if self.include_public:
+            conditions.append("scope = 'PUBLIC'")
+        
+        # Private scope (own memories)
+        conditions.append(
+            f"(scope = 'PRIVATE' AND owner_id = '{self.agent_id}')"
+        )
+        
+        # Shared group scope
+        if self.groups:
+            group_list = "', '".join(self.groups)
+            conditions.append(
+                f"(scope = 'SHARED_GROUP' AND group_id IN ('{group_list}'))"
+            )
+        
+        # Own shared memories
+        conditions.append(
+            f"(scope = 'SHARED_GROUP' AND owner_id = '{self.agent_id}')"
+        )
+        
+        if not conditions:
+            return None
+        
+        # Combine with OR
+        return f"({' OR '.join(conditions)})"
 
 
 def create_public_memory_metadata(cycle: int, importance: float = 0.5) -> MemoryMetadata:

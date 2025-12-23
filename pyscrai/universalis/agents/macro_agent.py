@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pyscrai.data.schemas.models import Actor, WorldState, ResolutionType
 from pyscrai.universalis.agents.llm_controller import LanguageModel, LLMController
 from pyscrai.universalis.agents.llm_provider import LangChainOpenRouterModel
-from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.universalis.memory.interface import MemoryBank
 from pyscrai.universalis.memory.scopes import (
     MemoryScope, 
     ScopeFilter,
@@ -64,7 +64,7 @@ class MacroAgent:
         self,
         actor: Actor,
         llm: Optional[LanguageModel] = None,
-        memory_bank: Optional[ChromaDBMemoryBank] = None,
+        memory_bank: Optional[MemoryBank] = None,
         config: Optional[MacroAgentConfig] = None
     ):
         """
@@ -285,7 +285,7 @@ Be concise and actionable. Refer to your assets by name if directing them."""
 
 def create_macro_agent(
     actor: Actor,
-    memory_bank: Optional[ChromaDBMemoryBank] = None,
+    memory_bank: Optional[MemoryBank] = None,
     **kwargs
 ) -> MacroAgent:
     """

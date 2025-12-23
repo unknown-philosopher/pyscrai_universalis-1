@@ -11,7 +11,7 @@ from enum import Enum
 from datetime import datetime
 
 from pyscrai.data.schemas.models import WorldState, Actor
-from pyscrai.universalis.memory.associative import ChromaDBMemoryBank
+from pyscrai.universalis.memory.interface import MemoryBank
 from pyscrai.universalis.memory.scopes import MemoryScope
 from pyscrai.universalis.memory.stream import MemoryStream, EventType
 from pyscrai.utils.logger import get_logger
@@ -117,7 +117,7 @@ class ObservationProcessor:
     
     def __init__(
         self,
-        memory_bank: Optional[ChromaDBMemoryBank] = None,
+        memory_bank: Optional[MemoryBank] = None,
         memory_stream: Optional[MemoryStream] = None,
         auto_store: bool = True
     ):
@@ -359,7 +359,7 @@ class ObservationProcessor:
 
 
 def create_observation_processor(
-    memory_bank: Optional[ChromaDBMemoryBank] = None,
+    memory_bank: Optional[MemoryBank] = None,
     memory_stream: Optional[MemoryStream] = None
 ) -> ObservationProcessor:
     """

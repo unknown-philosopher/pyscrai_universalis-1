@@ -22,12 +22,13 @@ from pyscrai.universalis.memory.scopes import (
     create_public_memory_metadata,
     create_private_memory_metadata,
 )
+from pyscrai.universalis.memory.interface import MemoryBank
 from pyscrai.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class ChromaDBMemoryBank:
+class ChromaDBMemoryBank(MemoryBank):
     """
     ChromaDB-backed associative memory implementing Concordia interface.
     

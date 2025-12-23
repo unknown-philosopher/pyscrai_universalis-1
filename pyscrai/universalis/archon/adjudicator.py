@@ -111,7 +111,7 @@ class Archon(ArchonInterface):
         self.spatial_checker = SpatialConstraintChecker(simulation_id=self._simulation_id)
         
         # Memory References (Injected by Engine)
-        self.memory_bank = None  # Will be LanceDBMemoryBank or ChromaDBMemoryBank
+        self.memory_bank = None  # Will be MemoryBank (LanceDBMemoryBank or ChromaDBMemoryBank)
         self.memory_stream: Optional[MemoryStream] = None
         
         # Agent Cache (preserves state across cycles)
